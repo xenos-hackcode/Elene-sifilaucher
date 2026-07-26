@@ -7,7 +7,7 @@
     android:padding="4dp"
     android:background="#FF000000">
 
-    <!-- Xenos toolbar: Clipboard, Fonts, Settings -->
+    <!-- Xenos toolbar: Clipboard + Settings -->
     <LinearLayout
         android:id="@+id/xenos_toolbar"
         android:layout_width="match_parent"
@@ -27,33 +27,24 @@
             android:contentDescription="Clipboard" />
 
         <ImageButton
-            android:id="@+id/btn_fonts"
+            android:id="@+id/btn_settings"
             android:layout_width="32dp"
             android:layout_height="32dp"
             android:layout_marginStart="4dp"
             android:background="@drawable/xenos_key_black"
             android:src="@android:drawable/ic_menu_manage"
             android:tint="#FF09C20C"
-            android:contentDescription="Fonts" />
-
-        <ImageButton
-            android:id="@+id/btn_settings"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginStart="4dp"
-            android:background="@drawable/xenos_key_black"
-            android:src="@android:drawable/ic_menu_agenda"
-            android:tint="#FF09C20C"
             android:contentDescription="Settings" />
+
     </LinearLayout>
 
-    <!-- Stack area: either keys OR clipboard -->
+    <!-- Stack area: letters/symbols/clipboard -->
     <FrameLayout
         android:id="@+id/xenos_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <!-- Normal keyboard keys -->
+        <!-- Letters/numbers keyboard -->
         <LinearLayout
             android:id="@+id/xenos_key_area"
             android:layout_width="match_parent"
@@ -420,7 +411,7 @@
                     android:background="@drawable/xenos_key_black" />
             </LinearLayout>
 
-            <!-- Row 4: Shift, Theme, Space, Delete, Enter -->
+            <!-- Row 4: Shift, ?123/ABC, Space, Delete, Enter -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -443,7 +434,7 @@
                     android:layout_width="0dp"
                     android:layout_height="48dp"
                     android:layout_weight="1"
-                    android:text="●"
+                    android:text="\?123"
                     android:textColor="#FF09C20C"
                     android:background="@drawable/xenos_key_black" />
 
@@ -474,6 +465,356 @@
                     android:textColor="#FF09C20C"
                     android:background="@drawable/xenos_key_black" />
             </LinearLayout>
+        </LinearLayout>
+
+        <!-- Symbols keyboard area (page 1) -->
+        <LinearLayout
+            android:id="@+id/xenos_symbol_area"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <!-- Symbols row 1: ! @ # $ % & * ( ) _ -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:weightSum="10">
+
+                <Button
+                    android:id="@+id/sym_exclam"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="!"
+                    android:textColor="#E91E63"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_at"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="@"
+                    android:textColor="#C20925"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_hash"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="#"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_dollar"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="$"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_percent"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="%"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_amp"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="&amp;"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_star"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="*"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_lparen"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="("
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_rparen"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text=")"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_underscore"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="_"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
+            <!-- Symbols row 2: + - = / \ | ~ < > ± -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:weightSum="10">
+
+                <Button
+                    android:id="@+id/sym_plus"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="+"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_minus"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="-"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_equal"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="="
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_slash"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="/"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_backslash"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="\\"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_pipe"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="|"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_tilde"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="~"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_lt"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="&lt;"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_gt"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="&gt;"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_pm"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="±"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
+            <!-- Symbols row 3: , . ? : ; ' " … • - -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:weightSum="10">
+
+                <Button
+                    android:id="@+id/sym_comma"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text=","
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_dot"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="."
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_question"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="?"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_colon"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text=":"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_semicolon"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text=";"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_quote"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="'"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_dquote"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="&quot;"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_ellipsis"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="…"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_bullet"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="•"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_hyphen"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="-"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
+            <!-- Symbols row 4: ABC, space, delete, enter -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:weightSum="5"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp">
+
+                <Button
+                    android:id="@+id/sym_to_letters"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="ABC"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_space"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="2"
+                    android:text="space"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_delete"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="0.5"
+                    android:text="⌫"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:id="@+id/sym_enter"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="0.5"
+                    android:text="⏎"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
         </LinearLayout>
 
         <!-- Clipboard history panel (initially hidden) -->
@@ -527,30 +868,5 @@
         </LinearLayout>
 
     </FrameLayout>
-
-    <!-- Bottom settings panel: AI mode only -->
-    <LinearLayout
-        android:id="@+id/xenos_settings_panel"
-        android:layout_width="match_parent"
-        android:layout_height="36dp"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp">
-
-        <TextView
-            android:id="@+id/txt_ai_mode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="AI mode"
-            android:textColor="#FF09C20C"
-            android:textSize="12sp" />
-
-        <Switch
-            android:id="@+id/switch_ai_mode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp" />
-    </LinearLayout>
 
 </LinearLayout>

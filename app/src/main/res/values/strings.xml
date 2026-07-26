@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">SciFiLauncher</string>
     <string name="xenos_keyboard_name">Xenos Keyboard</string>
+    <string name="cedal_keyboard_name">Cedal Keyboard</string>
+    <string name="scifi_accessibility_description">Lets Elene scroll, go back, go home, open recents, tap or highlight things by name, and read on-screen text to understand the current page - on your command, in whatever app is on screen.</string>
+    <string name="scifi_accessibility_label">SciFi Elene</string>
+    <string name="device_admin_description">Lets Sequence Mode engage the real lockscreen instantly if the device may be lost or stolen, and (only if you separately opt in) fully wipe the device as a last resort.</string>
 </resources>

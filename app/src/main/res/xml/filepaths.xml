@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Allow FileProvider to serve files in filesDir/intruders -->
+    <files-path
+        name="intruders"
+        path="intruders/" />
+    <!-- Allow FileProvider to serve shared APK exports from cacheDir/shared_apks -->
+    <cache-path
+        name="shared_apks"
+        path="shared_apks/" />
+    <!-- Allow FileProvider to serve files opened from the shared-storage file browser -->
+    <external-path
+        name="external_files"
+        path="." />
+</paths>

@@ -3,6 +3,8 @@ package com.example.scifilauncher
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.RemoteInput
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -16,6 +18,18 @@ data class LastMessageInfo(
     val title: String,
     val text: String
 )
+
+/** Notification access is a special Android permission that can only be granted through
+ * Settings, never a normal runtime permission dialog - without this explicit check + deep
+ * link, the listener silently never connects and nothing ever shows up, with no error
+ * anywhere to explain why. */
+fun isNotificationListenerEnabled(context: Context): Boolean {
+    val enabled = android.provider.Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners"
+    ) ?: return false
+    return enabled.contains(context.packageName)
+}
 
 data class ReplyableNotification(
     val key: String,                    // sbn.key
@@ -45,6 +59,21 @@ class XenosNotificationListener : NotificationListenerService() {
         // active service instance
         @Volatile
         var instance: XenosNotificationListener? = null
+
+        /** Removes a single entry from the feed, e.g. after the user dismisses it in the
+         * custom in-app notification bar. Matches on identity since LastMessageInfo has no key. */
+        @JvmStatic
+        @Synchronized
+        fun dismissMissed(item: LastMessageInfo) {
+            missedNotifications.remove(item)
+        }
+
+        @JvmStatic
+        @Synchronized
+        fun clearMissed() {
+            missedNotifications.clear()
+            hasUnreadMessage = false
+        }
     }
 
     override fun onListenerConnected() {
@@ -112,11 +141,14 @@ class XenosNotificationListener : NotificationListenerService() {
             }
         }
 
-        val intent = Intent("com.example.scifilauncher.NEW_NOTIFICATION_VOICE").apply {
-            putExtra("appName", appName)
-            putExtra("packageName", pkg)
+        // Only announce via Elene if toggle is ON and battery saver not Aggressive
+        if (canAnnounceNotification()) {
+            val intent = Intent("com.example.scifilauncher.NEW_NOTIFICATION_VOICE").apply {
+                putExtra("appName", appName)
+                putExtra("packageName", pkg)
+            }
+            sendBroadcast(intent)
         }
-        sendBroadcast(intent)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
@@ -159,5 +191,22 @@ class XenosNotificationListener : NotificationListenerService() {
             Log.e("XenosNL", "Error sending direct reply", e)
             false
         }
+    }
+
+    /**
+     * Checks if Elene is allowed to voice-announce this notification.
+     * Controlled by:
+     *  - theme_prefs.elene_voice_on (your Notification toggle)
+     *  - battery_prefs + BatterySaverMode (Aggressive mutes her)
+     */
+    private fun canAnnounceNotification(): Boolean {
+        val themePrefs = getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
+        val batteryPrefs = getSharedPreferences("battery_prefs", Context.MODE_PRIVATE)
+
+        val eleneVoiceOn = themePrefs.getBoolean("elene_voice_on", true)
+        val batteryMode = loadBatterySaverMode(batteryPrefs)
+
+        // Announce only when toggle ON AND battery saver is OFF
+        return eleneVoiceOn && batteryMode == BatterySaverMode.OFF
     }
 }

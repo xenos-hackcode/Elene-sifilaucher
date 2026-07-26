@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -14,6 +16,26 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        signingConfig = signingConfigs.getByName("debug")
+        testFunctionalTest = false
+        testHandleProfiling = false
+
+        ndk {
+            // Personal device only (Galaxy A54, arm64-v8a) - no need to build/ship other ABIs.
+            abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {
@@ -34,10 +56,31 @@ android {
 
     buildFeatures {
         compose = true
+        viewBinding = true
+        aidl = true
+    }
+
+    androidResources {
+        noCompress += "onnx"
     }
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
+    }
+
+    dependenciesInfo {
+        includeInApk = true
+        includeInBundle = true
+    }
+
+    buildToolsVersion = "34.0.0"
+    ndkVersion = "27.1.12297006"
+}
+
+// Kotlin compiler options (Kotlin DSL way)
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_11)
     }
 }
 
@@ -57,8 +100,27 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
 
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
-    implementation ("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation ("org.json:json:20231013")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.json:json:20231013")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // QR scanning for the "Scan QR" quick control - handles camera + decode in one activity,
+    // no need to hand-roll CameraX + a barcode decoder.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("com.google.zxing:core:3.5.3")
+
+    // Shizuku: lets this app run commands with real ADB/shell-level privilege (e.g. genuine
+    // `am force-stop`) without root - only after the user explicitly activates the separate
+    // Shizuku app and grants this app permission through it. Nothing this unlocks works
+    // silently or without that setup.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    // Offline speaker verification: ECAPA-TDNN speaker embedding model (Wespeaker project,
+    // app/src/main/assets/ecapa_tdnn_speaker.onnx) - replaced the earlier FRILL/TFLite attempt,
+    // which was a general-purpose embedding, not built for speaker verification, and showed
+    // real same-speaker inconsistency in on-device testing.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.27.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

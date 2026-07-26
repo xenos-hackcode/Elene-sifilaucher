@@ -13,13 +13,17 @@ class LockNotificationListenerService : NotificationListenerService() {
 
         val prefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
         val lockedSet = loadLockedApps(prefs)
-        val lockTimeoutMinutes = loadLockTimeoutMinutes(prefs)
         val hideLocked = loadHideLockedNotifications(prefs)
 
         if (!hideLocked) return
 
-        // App is in locked list AND timer says it is locked → cancel notification
-        if (lockedSet.contains(pkg) && shouldRequireUnlock(prefs, lockTimeoutMinutes)) {
+        val isLockedNow = isAppLockedRightNow(
+            prefs = prefs,
+            packageName = pkg,
+            lockedApps = lockedSet
+        )
+
+        if (isLockedNow) {
             cancelNotification(sbn.key)
         }
     }

@@ -1,6 +1,5 @@
 package com.example.scifilauncher
 
-import android.content.SharedPreferences
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,17 +20,13 @@ import androidx.compose.ui.unit.sp
 fun ThemePanel(
     themeColor: Color,
     currentThemeIndex: Int,
-    currentCycleMinutes: Int,
-    batteryThemePrefs: SharedPreferences,
+    currentDarkMode: DarkModeOption,
     onSelectTheme: (Int) -> Unit,
-    onSelectMinutes: (Int) -> Unit,
+    onSelectDarkMode: (DarkModeOption) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // Start from current theme + its saved battery colors
     var localThemeIndex by remember { mutableStateOf(currentThemeIndex) }
-    var localBatteryColors by remember(currentThemeIndex) {
-        mutableStateOf(loadBatteryColorsForTheme(batteryThemePrefs, currentThemeIndex))
-    }
+    var localDarkMode by remember { mutableStateOf(currentDarkMode) }
 
     Box(
         modifier = Modifier
@@ -54,7 +49,6 @@ fun ThemePanel(
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                // HEADER + BACK / SAVE
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -79,24 +73,8 @@ fun ThemePanel(
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier.clickable {
-                            // save selected battery colors
-                            saveBatteryHighColor(
-                                batteryThemePrefs,
-                                localThemeIndex,
-                                localBatteryColors.high
-                            )
-                            saveBatteryMediumColor(
-                                batteryThemePrefs,
-                                localThemeIndex,
-                                localBatteryColors.medium
-                            )
-                            saveBatteryLowColor(
-                                batteryThemePrefs,
-                                localThemeIndex,
-                                localBatteryColors.low
-                            )
-
                             onSelectTheme(localThemeIndex)
+                            onSelectDarkMode(localDarkMode)
                             onDismiss()
                         }
                     )
@@ -104,16 +82,11 @@ fun ThemePanel(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // THEME PRESETS
                 CedalThemes.forEachIndexed { index, t ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                localThemeIndex = index
-                                localBatteryColors =
-                                    loadBatteryColorsForTheme(batteryThemePrefs, index)
-                            }
+                            .clickable { localThemeIndex = index }
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -134,22 +107,10 @@ fun ThemePanel(
                                         .size(14.dp)
                                         .background(t.primary, RoundedCornerShape(3.dp))
                                 )
-                                Text(
-                                    text = "Primary",
-                                    color = Color.Gray,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
                                 Box(
                                     modifier = Modifier
                                         .size(14.dp)
                                         .background(t.secondary, RoundedCornerShape(3.dp))
-                                )
-                                Text(
-                                    text = "Secondary",
-                                    color = Color.Gray,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace
                                 )
                             }
                         }
@@ -163,73 +124,32 @@ fun ThemePanel(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-
                 Text(
-                    text = "BATTERY COLORS",
+                    text = "APPEARANCE",
                     color = themeColor,
                     fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-
-                Text(
-                    text = "Note: Battery colors are per-theme.\n" +
-                            "Changing theme may reset these colors.",
-                    color = Color.Gray,
-                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                BatteryColorRow(
-                    label = "High (50%–100%)",
-                    current = localBatteryColors.high,
-                    onColorSelected = { c: Color ->
-                        localBatteryColors = localBatteryColors.copy(high = c)
-                    }
-                )
-                BatteryColorRow(
-                    label = "Medium (20%–49%)",
-                    current = localBatteryColors.medium,
-                    onColorSelected = { c: Color ->
-                        localBatteryColors = localBatteryColors.copy(medium = c)
-                    }
-                )
-                BatteryColorRow(
-                    label = "Low (0%–19%)",
-                    current = localBatteryColors.low,
-                    onColorSelected = { c: Color ->
-                        localBatteryColors = localBatteryColors.copy(low = c)
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Cycle primary / secondary every:",
-                    color = Color.Gray,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-
-                listOf(5, 10, 15).forEach { minutes ->
+                listOf(DarkModeOption.DARK to "Dark", DarkModeOption.LIGHT to "Light").forEach { (option, label) ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelectMinutes(minutes) }
+                            .clickable { localDarkMode = option }
                             .padding(vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "$minutes minutes",
+                            text = label,
                             color = Color.White,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = if (minutes == currentCycleMinutes) "SELECTED" else "",
-                            color = if (minutes == currentCycleMinutes) themeColor else Color.Transparent,
+                            text = if (option == localDarkMode) "SELECTED" else "",
+                            color = if (option == localDarkMode) themeColor else Color.Transparent,
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -238,48 +158,17 @@ fun ThemePanel(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Changes apply only when you press SAVE.",
+                    text = "Battery ring color is fixed: green 50-100%, yellow 20-49%, red 0-19%.",
                     color = Color.Gray,
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
-            }
-        }
-    }
-}
-
-@Composable
-fun BatteryColorRow(
-    label: String,
-    current: Color,
-    onColorSelected: (Color) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-    ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .background(current, RoundedCornerShape(4.dp))
-            )
-            BatteryColorOptions.forEach { c: Color ->
-                Box(
-                    modifier = Modifier
-                        .size(16.dp)
-                        .background(c, RoundedCornerShape(4.dp))
-                        .clickable { onColorSelected(c) }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Changes apply only when you press SAVE.",
+                    color = Color.Gray,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }

@@ -2,21 +2,63 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-    <!-- For voice recognition (when you add STT) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- Needed so NotificationListenerService can run -->
-    <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-        tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
+    <!-- Quick Settings extra controls: eye comfort overlay, brightness slider, screen record -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- Lets this app prompt the system's real "ignore battery optimizations" dialog on
+         behalf of a known Cedal sibling app (e.g. Cedal SMS), so it can keep running in the
+         background - this only opens the standard system confirmation, never a silent grant -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Scheduled device actions ("uninstall this in 2 hours") - Device Owner apps are
+         implicitly granted this, but it still needs to be declared -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Needed so NotificationListenerService can run -->
+    <uses-permission
+        android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Cedal Shared System: signature-level permission so only apps signed with this
+         same certificate can send/receive on the sync channel -->
+    <permission
+        android:name="com.xhacker.cedal.SHARE_SYSTEM"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.xhacker.cedal.SHARE_SYSTEM" />
+
+    <!-- Query other launchers (for app list, etc.) and known Cedal sibling apps -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <package android:name="com.xhacker.cedalmobiledev" />
+        <package android:name="com.xhacker.cedalsmsrelay" />
     </queries>
 
     <application
@@ -30,18 +72,42 @@
         android:theme="@style/Theme.SciFiLauncher"
         android:usesCleartextTraffic="true">
 
-    <activity
+        <!-- FileProvider for intruder photos -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/filepaths" />
+        </provider>
+
+        <!-- Main launcher / home activity -->
+        <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:label="@string/app_name"
             android:theme="@style/Theme.SciFiLauncher">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
+                <!-- Make this a launcher/home app -->
                 <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
-        <!-- Your existing lock notification listener (keep it) -->
+        <!-- Dedicated host for BiometricPrompt (needs a FragmentActivity, kept isolated
+             from MainActivity - see BiometricAuthActivity for why) -->
+        <activity
+            android:name=".BiometricAuthActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Existing lock notification listener -->
         <service
             android:name=".LockNotificationListenerService"
             android:label="SciFi Notification Filter"
@@ -52,7 +118,7 @@
             </intent-filter>
         </service>
 
-        <!-- New listener for voice announcements / message capture -->
+        <!-- Xenos notification listener -->
         <service
             android:name=".XenosNotificationListener"
             android:label="Xenos Notification Listener"
@@ -63,6 +129,7 @@
             </intent-filter>
         </service>
 
+        <!-- Xenos keyboard IME -->
         <service
             android:name=".XenosKeyboardService"
             android:permission="android.permission.BIND_INPUT_METHOD"
@@ -76,6 +143,128 @@
                 android:name="android.view.im"
                 android:resource="@xml/xenos_ime_config" />
         </service>
+
+        <!-- Cedal keyboard IME -->
+        <service
+            android:name=".CedalKeyboardService"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true"
+            android:label="@string/cedal_keyboard_name">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/cedal_ime_config" />
+        </service>
+
+        <!-- Elene's system-wide screen control (scroll/back/home/recents). android:icon makes
+             the accessibility button/overlay show Elene's bubble instead of the launcher icon
+             when it floats over other apps. -->
+        <service
+            android:name=".ScifiAccessibilityService"
+            android:icon="@drawable/ic_elene_bubble"
+            android:label="@string/scifi_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/scifi_accessibility_service_config" />
+        </service>
+
+        <!-- Sequence Mode: OS-level lockdown/wipe via Device Admin -->
+        <receiver
+            android:name=".SequenceDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Local DNS-level tracker/ad blocking (no root, no remote server) -->
+        <service
+            android:name=".TrackerBlockVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Eye Comfort Shield: warm-tint overlay window, real SYSTEM_ALERT_WINDOW usage
+             rather than relying on an OEM night-light toggle that may not exist/enforce -->
+        <service
+            android:name=".EyeComfortOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="eye_comfort_screen_tint" />
+        </service>
+
+        <!-- Screen Record: MediaProjection-backed recorder, foreground service required by
+             Android whenever a projection session is active. Runs in its own process - this
+             API surface is finicky, and an uncaught crash in here must never be able to take
+             the launcher itself down (that already happened once: an unguarded
+             MediaProjection call crashed the shared process, and since this app IS the phone's
+             home app, that meant no home screen until it was disabled). The startRecording()
+             code is now also fully wrapped, but this is the belt-and-suspenders fix for
+             whatever the next unanticipated failure mode turns out to be. -->
+        <service
+            android:name=".ScreenRecordService"
+            android:exported="false"
+            android:process=":recorder"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- Cedal Shared System: receives sync broadcasts from verified same-signature
+             Cedal sibling apps only (gated by the signature-level permission above) -->
+        <receiver
+            android:name=".CedalSharedSystemReceiver"
+            android:permission="com.xhacker.cedal.SHARE_SYSTEM"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xhacker.cedal.action.SYNC" />
+            </intent-filter>
+        </receiver>
+
+        <!-- New-install monitor: PACKAGE_ADDED is a protected system broadcast, exempt from
+             the Android 8+ implicit-broadcast restrictions, so this fires even when the app
+             isn't running -->
+        <receiver
+            android:name=".PackageInstallWatcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Fires scheduled device actions (delayed uninstall/download) via AlarmManager -->
+        <receiver
+            android:name=".ScheduledActionReceiver"
+            android:exported="false" />
+
+        <!-- Required by the Shizuku API for the separate Shizuku app to detect and bind to
+             this app - standard boilerplate from Shizuku's own integration guide, not
+             something that grants any access by itself. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
     </application>
 
 </manifest>

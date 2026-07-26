@@ -8,15 +8,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Divider
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,11 +29,15 @@ fun SettingsScreen(
     themeColor: Color,
     batteryMode: BatterySaverMode,
     currentThemeIndex: Int,
-    currentCycleMinutes: Int,
     onThemeChange: (Int) -> Unit,
-    onCycleMinutesChange: (Int) -> Unit,
     onBackToDashboard: () -> Unit,
-    onOpenBatteryAllowedApps: () -> Unit
+    onFeedback: () -> Unit,
+    onMakeDefaultLauncher: () -> Unit,
+    onPrivacyPolicy: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onOpenMoreApps: () -> Unit,
+    onOpenCapabilities: () -> Unit,
+    onDarkModeChange: (DarkModeOption) -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -46,16 +52,16 @@ fun SettingsScreen(
     val fontPrefs = remember {
         context.getSharedPreferences("font_prefs", Context.MODE_PRIVATE)
     }
-    val batteryThemePrefs = remember {
-        context.getSharedPreferences("battery_theme_prefs", Context.MODE_PRIVATE)
-    }
     val themePrefs = remember {
         context.getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
     }
     var keyboardStyle by remember { mutableStateOf(loadKeyboardStyle(themePrefs)) }
+    var eleneVoiceOn by remember { mutableStateOf(themePrefs.getBoolean("elene_voice_on", true)) }
+    var continuousListeningOn by remember { mutableStateOf(themePrefs.getBoolean("elene_continuous_listening", true)) }
+    var showContinuousListeningInfo by remember { mutableStateOf(false) }
+
 
     var showTimeFormatPanel by remember { mutableStateOf(false) }
-    var showBatterySaverPanel by remember { mutableStateOf(false) }
     var showFontSizePanel by remember { mutableStateOf(false) }
     var showLanguagePanel by remember { mutableStateOf(false) }
 
@@ -73,17 +79,20 @@ fun SettingsScreen(
     Box(
         modifier = modifier.fillMaxSize()
     ) {
-        MatrixBackground(
-            themeColor = themeColor,
-            isDark = (darkModeOption == DarkModeOption.DARK),
-            batteryMode = batteryMode
-        )
+        PanelBackdrop(isDark = darkModeOption == DarkModeOption.DARK)
+        androidx.compose.runtime.CompositionLocalProvider(LocalPanelIsDark provides (darkModeOption == DarkModeOption.DARK)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
-                .padding(16.dp)
+                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
         ) {
+            // The notification/quick-settings pull tabs float persistently at the very top
+            // corners on every screen (see NotificationBarTab/QuickSettingsTab in
+            // MainActivity) - extra top clearance here keeps this header from visually
+            // crowding into them.
+            Spacer(modifier = Modifier.height(28.dp))
+
             // HEADER
             Row(
                 modifier = Modifier
@@ -117,112 +126,105 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.Start
             ) {
-                SectionTitle("APPEARANCE", themeColor, baseFontSize, textColor)
+                PanelSection(title = "APPEARANCE", themeColor = themeColor) {
+                    PanelRow(
+                        label = "Theme",
+                        themeColor = themeColor,
+                        value = CedalThemes[currentThemeIndex].name,
+                        onClick = { showThemePanel = true }
+                    )
+                    PanelRow(
+                        label = "Font size",
+                        themeColor = themeColor,
+                        value = when (fontSizeOption) {
+                            FontSizeOption.SMALL -> "Small"
+                            FontSizeOption.NORMAL -> "Normal"
+                            FontSizeOption.LARGE -> "Large"
+                            FontSizeOption.HUGE -> "Huge"
+                        },
+                        showDivider = false,
+                        onClick = { showFontSizePanel = true }
+                    )
+                }
 
-
-                SettingsRow(
-                    label = "Theme (${CedalThemes[currentThemeIndex].name})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showThemePanel = true }
-                )
-
-                SettingsRow(
-                    label = "Font size (${when (fontSizeOption) {
-                        FontSizeOption.SMALL -> "Small"
-                        FontSizeOption.NORMAL -> "Normal"
-                        FontSizeOption.LARGE -> "Large"
-                        FontSizeOption.HUGE -> "Huge"
-                    }})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showFontSizePanel = true }
-                )
-
-                SettingsRow(
-                    label = "Dark / Light mode (${if (darkModeOption == DarkModeOption.DARK) "Dark" else "Light"})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = {
-                        darkModeOption = if (darkModeOption == DarkModeOption.DARK) {
-                            DarkModeOption.LIGHT
-                        } else {
-                            DarkModeOption.DARK
+                PanelSection(title = "SYSTEM & BEHAVIOR", themeColor = themeColor) {
+                    PanelRow(
+                        label = "Time format",
+                        themeColor = themeColor,
+                        value = if (timeFormat == TimeFormatOption.FORMAT_24H) "24-hour" else "12-hour",
+                        onClick = { showTimeFormatPanel = true }
+                    )
+                    PanelToggleRow(
+                        label = "Battery saver",
+                        themeColor = themeColor,
+                        checked = batteryMode != BatterySaverMode.OFF,
+                        onToggle = { on ->
+                            batteryMode = if (on) BatterySaverMode.AGGRESSIVE else BatterySaverMode.OFF
+                            saveBatterySaverMode(batteryPrefs, batteryMode)
                         }
-                        saveDarkMode(themePrefs, darkModeOption)
-                    }
-                )
+                    )
+                    PanelRow(
+                        label = "Language",
+                        themeColor = themeColor,
+                        value = when (languageOption) {
+                            LanguageOption.ENGLISH -> "English"
+                            LanguageOption.YORUBA -> "Yoruba"
+                            LanguageOption.MANDARIN -> "Mandarin"
+                            LanguageOption.KOREAN -> "Korean"
+                            LanguageOption.FRENCH -> "French"
+                            LanguageOption.SPANISH -> "Spanish"
+                            LanguageOption.GERMAN -> "German"
+                        },
+                        onClick = { showLanguagePanel = true }
+                    )
+                    PanelRow(
+                        label = "Keyboard",
+                        themeColor = themeColor,
+                        value = when (keyboardStyle) {
+                            KeyboardStyle.NORMAL -> "Normal"
+                            KeyboardStyle.XENOS -> "Xenos"
+                            KeyboardStyle.CEDAL -> "Cedal"
+                        },
+                        onClick = { showKeyboardPanel = true }
+                    )
+                    PanelToggleRow(
+                        label = "Elene voice",
+                        themeColor = themeColor,
+                        checked = eleneVoiceOn,
+                        onToggle = {
+                            eleneVoiceOn = it
+                            themePrefs.edit().putBoolean("elene_voice_on", eleneVoiceOn).apply()
+                        }
+                    )
+                    PanelToggleRow(
+                        label = "Elene keeps listening",
+                        themeColor = themeColor,
+                        checked = continuousListeningOn,
+                        showDivider = false,
+                        onToggle = {
+                            continuousListeningOn = it
+                            themePrefs.edit().putBoolean("elene_continuous_listening", continuousListeningOn).apply()
+                        },
+                        onInfoClick = { showContinuousListeningInfo = true }
+                    )
+                }
 
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = themeColor.copy(alpha = 0.3f))
-                Spacer(modifier = Modifier.height(12.dp))
+                PanelSection(title = "CAPABILITIES", themeColor = themeColor) {
+                    PanelRow(
+                        label = "What this app can do",
+                        themeColor = themeColor,
+                        showDivider = false,
+                        onClick = onOpenCapabilities
+                    )
+                }
 
-                SectionTitle("SYSTEM & BEHAVIOR", themeColor, baseFontSize, textColor)
-
-                SettingsRow(
-                    label = "Time format (${if (timeFormat == TimeFormatOption.FORMAT_24H) "24-hour" else "12-hour"})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showTimeFormatPanel = true }
-                )
-
-                SettingsRow(
-                    label = "Battery saver mode (${when (batteryMode) {
-                        BatterySaverMode.OFF -> "Off"
-                        BatterySaverMode.BALANCED -> "Balanced"
-                        BatterySaverMode.AGGRESSIVE -> "Aggressive"
-                    }})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showBatterySaverPanel = true }
-                )
-
-                SettingsRow(
-                    label = "Battery saver allowed apps",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = onOpenBatteryAllowedApps
-                )
-
-                SettingsRow(
-                    label = "Language (${when (languageOption) {
-                        LanguageOption.ENGLISH -> "English"
-                        LanguageOption.YORUBA -> "Yoruba"
-                        LanguageOption.MANDARIN -> "Mandarin"
-                        LanguageOption.KOREAN -> "Korean"
-                        LanguageOption.FRENCH -> "French"
-                        LanguageOption.SPANISH -> "Spanish"
-                        LanguageOption.GERMAN -> "German"
-                    }})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showLanguagePanel = true }
-                )
-                SettingsRow(
-                    label = "Keyboard (${when (keyboardStyle) {
-                        KeyboardStyle.NORMAL -> "Normal"
-                        KeyboardStyle.XENOS -> "Xenos"
-                        KeyboardStyle.CEDAL -> "Cedal"
-                    }})",
-                    fontSize = baseFontSize,
-                    textColor = textColor,
-                    onClick = { showKeyboardPanel = true }
-                )
-                SettingsRow("Weather", fontSize = baseFontSize, textColor = textColor)
-                SettingsRow("Notification setting", fontSize = baseFontSize,textColor = textColor)
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = themeColor.copy(alpha = 0.3f))
-                Spacer(modifier = Modifier.height(12.dp))
-
-                SectionTitle("ABOUT & SUPPORT", themeColor, baseFontSize, textColor)
-
-                SettingsRow("Rate us", fontSize = baseFontSize,textColor = textColor)
-                SettingsRow("Feedback", fontSize = baseFontSize,textColor = textColor)
-                SettingsRow("Privacy policy", fontSize = baseFontSize,textColor = textColor)
-                SettingsRow("Make default launcher", fontSize = baseFontSize,textColor = textColor)
-                SettingsRow("About", fontSize = baseFontSize,textColor = textColor)
-                SettingsRow("More apps", fontSize = baseFontSize,textColor = textColor)
+                PanelSection(title = "ABOUT & SUPPORT", themeColor = themeColor) {
+                    PanelRow(label = "Feedback", themeColor = themeColor, onClick = onFeedback)
+                    PanelRow(label = "Privacy policy", themeColor = themeColor, onClick = onPrivacyPolicy)
+                    PanelRow(label = "Make default launcher", themeColor = themeColor, onClick = onMakeDefaultLauncher)
+                    PanelRow(label = "About", themeColor = themeColor, onClick = onOpenAbout)
+                    PanelRow(label = "More apps", themeColor = themeColor, showDivider = false, onClick = onOpenMoreApps)
+                }
 
                 Spacer(modifier = Modifier.height(24.dp))
             }
@@ -234,14 +236,41 @@ fun SettingsScreen(
             ThemePanel(
                 themeColor = themeColor,
                 currentThemeIndex = currentThemeIndex,
-                currentCycleMinutes = currentCycleMinutes,
-                batteryThemePrefs = batteryThemePrefs,
+                currentDarkMode = darkModeOption,
                 onSelectTheme = { idx ->
                     onThemeChange(idx)
                     themePrefs.edit().putInt("theme_index", idx).apply()
                 },
-                        onSelectMinutes = { minutes -> onCycleMinutesChange(minutes) },
+                onSelectDarkMode = { mode ->
+                    darkModeOption = mode
+                    saveDarkMode(themePrefs, mode)
+                    onDarkModeChange(mode)
+                },
                 onDismiss = { showThemePanel = false }
+            )
+        }
+
+
+        if (showContinuousListeningInfo) {
+            AlertDialog(
+                onDismissRequest = { showContinuousListeningInfo = false },
+                confirmButton = {
+                    TextButton(onClick = { showContinuousListeningInfo = false }) {
+                        Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                },
+                title = { Text("Elene keeps listening", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        "On: after replying, Elene keeps the mic open and waits for your next " +
+                            "thing - she only stops when you say \"stop listening\" (or a clear " +
+                            "equivalent like \"go away\").\n\n" +
+                            "Off: she stops listening automatically after every single reply, " +
+                            "the same as before - you'll need to tap the bubble again each time.",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp
+                    )
+                }
             )
         }
 
@@ -261,21 +290,6 @@ fun SettingsScreen(
             )
         }
 
-        if (showBatterySaverPanel) {
-            BatterySaverPanel(
-                themeColor = themeColor,
-                current = batteryMode,
-                titleFontSize = headerFontSize,
-                rowFontSize = baseFontSize,
-                hintFontSize = smallHintFontSize,
-                onSelect = { chosen: BatterySaverMode ->
-                    batteryMode = chosen
-                    saveBatterySaverMode(batteryPrefs, chosen)
-                    showBatterySaverPanel = false
-                },
-                onDismiss = { showBatterySaverPanel = false }
-            )
-        }
 
         if (showFontSizePanel) {
             FontSizePanel(
@@ -322,6 +336,7 @@ fun SettingsScreen(
                 onDismiss = { showKeyboardPanel = false }
             )
         }
+        }
     }
 }
 
@@ -346,42 +361,6 @@ fun saveDarkMode(prefs: SharedPreferences, option: DarkModeOption) {
 }
 
 // ----------------- Small helpers -----------------
-
-@Composable
-private fun SectionTitle(
-    text: String,
-    themeColor: Color,
-    fontSize: TextUnit,
-    textColor: Color
-) {
-    val titleSize = (fontSize.value - 2).coerceAtLeast(8f).sp
-    Text(
-        text = text,
-        color = textColor.copy(alpha = 0.9f),
-        fontSize = titleSize,
-        fontFamily = FontFamily.Monospace,
-        modifier = Modifier.padding(bottom = 8.dp)
-    )
-}
-
-@Composable
-private fun SettingsRow(
-    label: String,
-    fontSize: TextUnit,
-    textColor: Color,
-    onClick: () -> Unit = {}
-) {
-    Text(
-        text = label,
-        color = textColor,
-        fontSize = fontSize,
-        fontFamily = FontFamily.Monospace,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .clickable { onClick() }
-    )
-}
 
 @Composable
 private fun LanguagePanel(
@@ -585,112 +564,6 @@ private fun TimeFormatOptionRow(
 }
 
 @Composable
-private fun BatterySaverPanel(
-    themeColor: Color,
-    current: BatterySaverMode,
-    titleFontSize: TextUnit,
-    rowFontSize: TextUnit,
-    hintFontSize: TextUnit,
-    onSelect: (BatterySaverMode) -> Unit,
-    onDismiss: () -> Unit
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            color = Color(0xFF05070B),
-            tonalElevation = 8.dp,
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            ) {
-                Text(
-                    text = "BATTERY SAVER MODE",
-                    color = themeColor,
-                    fontSize = titleFontSize,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-
-                BatteryOptionRow(
-                    label = "Off (full experience)",
-                    selected = current == BatterySaverMode.OFF,
-                    themeColor = themeColor,
-                    fontSize = rowFontSize,
-                    onClick = { onSelect(BatterySaverMode.OFF) }
-                )
-
-                BatteryOptionRow(
-                    label = "Balanced (limit some effects)",
-                    selected = current == BatterySaverMode.BALANCED,
-                    themeColor = themeColor,
-                    fontSize = rowFontSize,
-                    onClick = { onSelect(BatterySaverMode.BALANCED) }
-                )
-
-                BatteryOptionRow(
-                    label = "Aggressive (minimum animations)",
-                    selected = current == BatterySaverMode.AGGRESSIVE,
-                    themeColor = themeColor,
-                    fontSize = rowFontSize,
-                    onClick = { onSelect(BatterySaverMode.AGGRESSIVE) }
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Tap outside to cancel.",
-                    color = Color.Gray,
-                    fontSize = hintFontSize,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BatteryOptionRow(
-    label: String,
-    selected: Boolean,
-    themeColor: Color,
-    fontSize: TextUnit,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = fontSize,
-            fontFamily = FontFamily.Monospace
-        )
-        Text(
-            text = if (selected) "SELECTED" else "",
-            color = if (selected) themeColor else Color.Transparent,
-            fontSize = (fontSize.value - 4).coerceAtLeast(8f).sp,
-            fontFamily = FontFamily.Monospace
-        )
-    }
-}
-
-@Composable
 private fun FontSizePanel(
     themeColor: Color,
     current: FontSizeOption,
@@ -794,6 +667,8 @@ private fun KeyboardPanel(
     onSelect: (KeyboardStyle) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -824,17 +699,27 @@ private fun KeyboardPanel(
 
                 KeyboardRow("Normal", current == KeyboardStyle.NORMAL, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.NORMAL)
+                    // Normal = system default keyboard, just close panel
+                    onDismiss()
                 }
+
                 KeyboardRow("Xenos (matrix)", current == KeyboardStyle.XENOS, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.XENOS)
+                    // Ask system to show picker so user selects XenosKeyboardService
+                    showInputMethodPicker(context)
+                    onDismiss()
                 }
+
                 KeyboardRow("Cedal", current == KeyboardStyle.CEDAL, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.CEDAL)
+                    // Ask system to show picker so user selects CedalKeyboardService
+                    showInputMethodPicker(context)
+                    onDismiss()
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Tap outside to cancel.",
+                    text = "After choosing, select the keyboard in the system picker.",
                     color = Color.Gray,
                     fontSize = hintFontSize,
                     fontFamily = FontFamily.Monospace

@@ -1,6 +1,5 @@
 package com.example.scifilauncher
 
-import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -13,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,11 +24,8 @@ fun RecentsScreen(
     batteryMode: BatterySaverMode,
     recentApps: List<AppItem>,
     onBackToDashboard: () -> Unit,
-    onOpenAppsFromRecents: () -> Unit,   // NEW
     onAppClick: (String) -> Unit
 ) {
-    val context = LocalContext.current
-
     Box(
         modifier = modifier.fillMaxSize()
     ) {
@@ -44,6 +39,7 @@ fun RecentsScreen(
                 .fillMaxSize()
                 .systemBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 16.dp)
+                .padding(top = 24.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -100,19 +96,13 @@ fun RecentsScreen(
             GlitchNavLetter(
                 letter = "O",
                 color = themeColor,
-                onClick = {
-                    val intent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    context.startActivity(intent)
-                }
+                onClick = { onBackToDashboard() }
             )
 
             GlitchNavLetter(
                 letter = "S",
                 color = themeColor,
-                onClick = { onOpenAppsFromRecents() }
+                onClick = { /* already viewing recents */ }
             )
         }
     }

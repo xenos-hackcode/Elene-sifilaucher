@@ -7,7 +7,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -24,21 +23,9 @@ import androidx.compose.ui.unit.dp
 fun HudCircle(
     modifier: Modifier = Modifier,
     size: Dp = 140.dp,
-    themeColor: Color,
-    currentThemeIndex: Int
+    themeColor: Color
 ) {
     val context = LocalContext.current
-
-    // This is fine to remember
-    val batteryThemePrefs = remember {
-        context.getSharedPreferences(
-            "battery_theme_prefs",
-            android.content.Context.MODE_PRIVATE
-        )
-    }
-
-    // Load current theme’s colors – NO remember here
-    val batteryColors = loadBatteryColorsForTheme(batteryThemePrefs, currentThemeIndex)
 
     // Read battery level fresh
     val bm = context.getSystemService(BatteryManager::class.java)
@@ -53,11 +40,7 @@ fun HudCircle(
         status == BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == BatteryManager.BATTERY_STATUS_FULL
 
-    val ringColor = when {
-        batteryLevel >= 50 -> batteryColors.high
-        batteryLevel >= 20 -> batteryColors.medium
-        else -> batteryColors.low
-    }
+    val ringColor = batteryLevelColor(batteryLevel)
 
     Box(
         modifier = modifier.size(size)

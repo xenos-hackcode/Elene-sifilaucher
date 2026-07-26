@@ -42,8 +42,6 @@ fun languageToLocale(option: LanguageOption): Locale {
 
 // ========== Elene phrases ==========
 // key list (fixed sentences only, no dynamic app/user text):
-// - welcome_normal
-// - welcome_red
 // - hey_elene_prompt
 // - im_here
 // - cleared_notifications
@@ -57,44 +55,34 @@ fun languageToLocale(option: LanguageOption): Locale {
 // - all_missed_done
 // (the dynamic "From X on Y: Z" and calls stay constructed in MainActivity)
 
-fun elenePhrase(key: String, lang: LanguageOption, vararg args: String): String {
+fun elenePhrase(
+    key: String,
+    lang: LanguageOption,
+    userName: String?,          // NEW: current username, can be null
+    vararg args: String
+): String {
+    // Default address term. The AI backend switches to "Xenos" mid-conversation
+    // when the user indicates someone else is around; these local canned phrases
+    // (launch-time greetings etc.) have no such context, so they always use "Emperor".
+    val name = userName?.ifBlank { null } ?: "Emperor"
+
     return when (key) {
-
-        "welcome_normal" -> when (lang) {
-            LanguageOption.ENGLISH -> "Welcome, Xenos"
-            LanguageOption.YORUBA -> "Kaabọ, Xenos"
-            LanguageOption.MANDARIN -> "欢迎你，Xenos"
-            LanguageOption.KOREAN -> "환영해, Xenos"
-            LanguageOption.FRENCH -> "Bienvenue, Xenos"
-            LanguageOption.SPANISH -> "Bienvenido, Xenos"
-            LanguageOption.GERMAN -> "Willkommen, Xenos"
-        }
-
-        "welcome_red" -> when (lang) {
-            LanguageOption.ENGLISH -> "Hello, hacker"
-            LanguageOption.YORUBA -> "Báwo, hacker"
-            LanguageOption.MANDARIN -> "你好，黑客"
-            LanguageOption.KOREAN -> "안녕, 해커"
-            LanguageOption.FRENCH -> "Salut, hacker"
-            LanguageOption.SPANISH -> "Hola, hacker"
-            LanguageOption.GERMAN -> "Hallo, Hacker"
-        }
 
         "hey_elene_prompt" -> when (lang) {
             LanguageOption.ENGLISH ->
-                "Hello, Xenos. Do you want me to check if you missed any notifications?"
+                "Hello, $name. Do you want me to check if you missed any notifications?"
             LanguageOption.YORUBA ->
-                "Pẹ̀lẹ́, Xenos. Ṣe kí n ṣàyẹ̀wò bóyá o ti padanu ìkìlọ́ kankan?"
+                "Pẹ̀lẹ́, $name. Ṣe kí n ṣàyẹ̀wò bóyá o ti padanu ìkìlọ́ kankan?"
             LanguageOption.MANDARIN ->
-                "你好，Xenos。要不要我检查你有没有错过通知？"
+                "你好，$name。要不要我检查你有没有错过通知？"
             LanguageOption.KOREAN ->
-                "안녕, Xenos. 놓친 알림이 있는지 확인해 줄까?"
+                "안녕, $name. 놓친 알림이 있는지 확인해 줄까?"
             LanguageOption.FRENCH ->
-                "Bonjour, Xenos. Veux‑tu que je vérifie si tu as manqué des notifications ?"
+                "Bonjour, $name. Veux‑tu que je vérifie si tu as manqué des notifications ?"
             LanguageOption.SPANISH ->
-                "Hola, Xenos. ¿Quieres que revise si te perdiste alguna notificación?"
+                "Hola, $name. ¿Quieres que revise si te perdiste alguna notificación?"
             LanguageOption.GERMAN ->
-                "Hallo, Xenos. Soll ich prüfen, ob du Benachrichtigungen verpasst hast?"
+                "Hallo, $name. Soll ich prüfen, ob du Benachrichtigungen verpasst hast?"
         }
 
         "im_here" -> when (lang) {
@@ -177,19 +165,19 @@ fun elenePhrase(key: String, lang: LanguageOption, vararg args: String): String 
 
         "notif_from_app" -> when (lang) {
             LanguageOption.ENGLISH ->
-                "Xenos, you got a notification from %s."
+                "$name, you got a notification from %s."
             LanguageOption.YORUBA ->
-                "Xenos, o gba ìkìlọ́ láti ọ̀dọ̀ %s."
+                "$name, o gba ìkìlọ́ láti ọ̀dọ̀ %s."
             LanguageOption.MANDARIN ->
-                "Xenos，你收到了来自 %s 的通知。"
+                "$name，你收到了来自 %s 的通知。"
             LanguageOption.KOREAN ->
-                "Xenos, %s 에서 알림이 왔어."
+                "$name, %s 에서 알림이 왔어."
             LanguageOption.FRENCH ->
-                "Xenos, tu as reçu une notification de %s."
+                "$name, tu as reçu une notification de %s."
             LanguageOption.SPANISH ->
-                "Xenos, recibiste una notificación de %s."
+                "$name, recibiste una notificación de %s."
             LanguageOption.GERMAN ->
-                "Xenos, du hast eine Benachrichtigung von %s bekommen."
+                "$name, du hast eine Benachrichtigung von %s bekommen."
         }
 
         "ask_message_text" -> when (lang) {

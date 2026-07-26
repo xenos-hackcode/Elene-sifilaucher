@@ -13,3 +13,21 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Env files anywhere in the repo — never commit
+.env
+*.env
+**/.env
+
+# Elene backend (Python)
+backend/elene/venv/
+backend/elene/__pycache__/
+
+# Signing keys — never commit
+*.jks
+*.keystore
+
+# Local editor/tool config — not shared project config
+.claude/
+.vscode/
+.kotlin/

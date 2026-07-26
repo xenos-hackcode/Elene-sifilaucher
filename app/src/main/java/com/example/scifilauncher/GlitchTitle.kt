@@ -25,17 +25,18 @@ import kotlin.random.Random
 fun GlitchNavLetter(
     letter: String,
     color: Color,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         GlitchTitle(
             text = letter,
-            color = color,
+            color = if (enabled) color else color.copy(alpha = 0.3f),
             fontSize = 20f
         )
     }

@@ -1,0 +1,117 @@
+package com.example.scifilauncher
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * Records [durationSamples] samples (16kHz mono) for speaker-embedding use. Returns null if
+ * RECORD_AUDIO isn't granted or the recorder fails to init - callers should treat that as
+ * "couldn't capture," not as a failed voice match. Does NOT stop early on silence - enrollment
+ * needs the full requested duration even through natural pauses/breaths, so trimming only
+ * happens afterward, on the complete recording.
+ */
+suspend fun recordVoiceSample(context: Context, durationSamples: Int = VOICE_SAMPLE_COUNT): FloatArray? =
+    withContext(Dispatchers.IO) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) return@withContext null
+
+        val minBufSize = AudioRecord.getMinBufferSize(
+            VOICE_SAMPLE_RATE,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (minBufSize <= 0) return@withContext null
+
+        val bufSize = maxOf(minBufSize, durationSamples * 2)
+        val recorder = runCatching {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                VOICE_SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufSize
+            )
+        }.getOrNull() ?: return@withContext null
+
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            return@withContext null
+        }
+
+        // Real acoustic echo cancellation - only possible because this path owns its own
+        // AudioRecord session directly. Elene's own TTS (or any other playback) picked up by
+        // the mic gets subtracted here rather than just hoping nothing was playing.
+        val aec = runCatching {
+            if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(recorder.audioSessionId) else null
+        }.getOrNull()
+        aec?.enabled = true
+
+        val focusHandle = requestAudioFocus(context, transient = true)
+
+        val pcm = ShortArray(durationSamples)
+        try {
+            recorder.startRecording()
+            var readTotal = 0
+            while (readTotal < pcm.size) {
+                val read = recorder.read(pcm, readTotal, pcm.size - readTotal)
+                if (read <= 0) break
+                readTotal += read
+            }
+            if (readTotal < pcm.size) return@withContext null
+        } finally {
+            runCatching { recorder.stop() }
+            recorder.release()
+            runCatching { aec?.release() }
+            releaseAudioFocus(context, focusHandle)
+        }
+
+        val raw = FloatArray(pcm.size) { i -> pcm[i] / 32768f }
+        val denoised = runCatching { NoiseSuppressor.denoise16k(raw) }.getOrDefault(raw)
+        trimSilenceVad(context, denoised)
+    }
+
+/**
+ * Trims leading/trailing silence using Silero VAD's real speech-probability output, rather than
+ * a fixed energy threshold that can't tell real speech from a loud room tone. Returns the
+ * shorter active-speech region as-is (no zero-padding) since the ECAPA-TDNN model accepts
+ * variable-length input natively, and padding would only add meaningless silence frames into
+ * the per-utterance mean normalization.
+ */
+private fun trimSilenceVad(context: Context, samples: FloatArray): FloatArray {
+    val chunkSize = 512 // fixed by Silero VAD for 16kHz input
+    val chunkCount = samples.size / chunkSize
+    if (chunkCount == 0) return samples
+
+    val vad = runCatching { SileroVad(context) }.getOrNull() ?: return samples
+    val speechProb = FloatArray(chunkCount)
+    try {
+        for (c in 0 until chunkCount) {
+            val chunk = samples.copyOfRange(c * chunkSize, (c + 1) * chunkSize)
+            speechProb[c] = runCatching { vad.speechProbability(chunk) }.getOrDefault(0f)
+        }
+    } finally {
+        vad.close()
+    }
+
+    val threshold = 0.5f
+    var firstActive = speechProb.indexOfFirst { it >= threshold }
+    var lastActive = speechProb.indexOfLast { it >= threshold }
+    if (firstActive < 0 || lastActive < 0) return samples
+
+    val padChunks = 3
+    firstActive = maxOf(0, firstActive - padChunks)
+    lastActive = minOf(chunkCount - 1, lastActive + padChunks)
+
+    val speechStart = firstActive * chunkSize
+    val speechEnd = minOf(samples.size, (lastActive + 1) * chunkSize)
+    return samples.copyOfRange(speechStart, speechEnd)
+}

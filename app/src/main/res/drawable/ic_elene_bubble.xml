@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Elene's floating-bubble glyph: used as the Accessibility service's icon so the
+         system-drawn accessibility button/overlay shows Elene, not the launcher icon. -->
+    <path
+        android:fillColor="#0B0F18"
+        android:pathData="M24,2 A22,22 0 1 1 23.99,2 Z" />
+    <path
+        android:fillColor="#00FF66"
+        android:fillAlpha="0.9"
+        android:pathData="M24,6 A18,18 0 1 1 23.99,6 Z" />
+    <path
+        android:fillColor="#0B0F18"
+        android:pathData="M24,13 A11,11 0 1 1 23.99,13 Z" />
+    <path
+        android:fillColor="#00FF66"
+        android:pathData="M24,19 A5,5 0 1 1 23.99,19 Z" />
+</vector>

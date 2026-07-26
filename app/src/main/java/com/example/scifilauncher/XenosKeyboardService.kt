@@ -9,7 +9,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 
@@ -53,27 +55,22 @@ class XenosKeyboardService : InputMethodService() {
     private fun createXenosKeyboard(): View {
         val view = layoutInflater.inflate(R.layout.view_xenos_keyboard, null)
 
-        // AI mode switch (bottom bar)
-        val switchAi = view.findViewById<Switch>(R.id.switch_ai_mode)
-        switchAi.isChecked = themePrefs.getBoolean("kb_ai_mode", false)
-        switchAi.setOnCheckedChangeListener { _, isChecked ->
-            themePrefs.edit().putBoolean("kb_ai_mode", isChecked).apply()
-        }
-
-        // Clipboard + settings UI (toolbar)
-        val btnClipboard = view.findViewById<View>(R.id.btn_clipboard)
-        val btnFonts = view.findViewById<View>(R.id.btn_fonts)
-        val btnSettings = view.findViewById<View>(R.id.btn_settings)
-
+        // Main areas
         val keyArea = view.findViewById<View>(R.id.xenos_key_area)
-        val clipboardPanel = view.findViewById<View>(R.id.xenos_clipboard_panel)
+        val symbolArea = view.findViewById<View>(R.id.xenos_symbol_area)
+        val clipboardPanel = view.findViewById<ScrollView>(R.id.xenos_clipboard_panel)
         val clipboardList = view.findViewById<LinearLayout>(R.id.xenos_clipboard_list)
-
         val settingsOverlay = view.findViewById<View>(R.id.xenos_settings_overlay)
+
+        // Toolbar buttons
+        val btnClipboard = view.findViewById<ImageButton>(R.id.btn_clipboard)
+        val btnSettings = view.findViewById<ImageButton>(R.id.btn_settings)
+
+        // Tiles switch (inside overlay)
         val switchTiles = view.findViewById<Switch>(R.id.switch_color_mode)
         val btnChangeMode = view.findViewById<Button>(R.id.btn_change_mode)
 
-        // Tiles toggle (cyan tiles vs black)
+        // Tiles mode
         val tilesOn = themePrefs.getBoolean("kb_tiles_on", false)
         switchTiles.isChecked = tilesOn
         applyTilesMode(view, tilesOn)
@@ -83,30 +80,51 @@ class XenosKeyboardService : InputMethodService() {
             applyTilesMode(view, isChecked)
         }
 
-        // Clipboard button: show clipboard panel
+        btnChangeMode.setOnClickListener {
+            switchTiles.isChecked = !switchTiles.isChecked
+        }
+
+        // Clipboard button
         btnClipboard.setOnClickListener {
             settingsOverlay.visibility = View.GONE
             keyArea.visibility = View.GONE
+            symbolArea.visibility = View.GONE
             clipboardPanel.visibility = View.VISIBLE
             populateClipboardList(clipboardList, view)
         }
 
-        // Fonts (placeholder)
-        btnFonts.setOnClickListener {
-            // TODO: fonts behavior
-        }
-
-        // Settings: toggle small overlay, ensure keys visible
+        // Settings overlay (spanner) – now just toggles overlay for tiles
         btnSettings.setOnClickListener {
             clipboardPanel.visibility = View.GONE
+            symbolArea.visibility = View.GONE
             keyArea.visibility = View.VISIBLE
             settingsOverlay.visibility =
                 if (settingsOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
 
-        // Change mode: just flip Tiles switch
-        btnChangeMode.setOnClickListener {
-            switchTiles.isChecked = !switchTiles.isChecked
+        // THEME BUTTON = ?123 <-> ABC
+        val themeButton = view.findViewById<Button>(R.id.key_theme)
+        themeButton.text = "?123"
+        themeButton.setOnClickListener {
+            if (keyArea.visibility == View.VISIBLE) {
+                keyArea.visibility = View.GONE
+                clipboardPanel.visibility = View.GONE
+                symbolArea.visibility = View.VISIBLE
+                themeButton.text = "ABC"
+            } else {
+                symbolArea.visibility = View.GONE
+                clipboardPanel.visibility = View.GONE
+                keyArea.visibility = View.VISIBLE
+                themeButton.text = "?123"
+            }
+        }
+
+        // Symbols back to letters
+        val symToLetters = view.findViewById<Button>(R.id.sym_to_letters)
+        symToLetters.setOnClickListener {
+            symbolArea.visibility = View.GONE
+            keyArea.visibility = View.VISIBLE
+            themeButton.text = "?123"
         }
 
         // NUMBER KEYS
@@ -127,6 +145,73 @@ class XenosKeyboardService : InputMethodService() {
         bindNumber(R.id.key_8, "8")
         bindNumber(R.id.key_9, "9")
         bindNumber(R.id.key_0, "0")
+
+        // SYMBOL KEYS
+        fun bindSym(id: Int, char: String) {
+            val btn = view.findViewById<Button>(id)
+            btn.setOnClickListener {
+                currentInputConnection?.commitText(char, 1)
+            }
+        }
+
+        // row 1
+        bindSym(R.id.sym_exclam, "!")
+        bindSym(R.id.sym_at, "@")
+        bindSym(R.id.sym_hash, "#")
+        bindSym(R.id.sym_dollar, "$")
+        bindSym(R.id.sym_percent, "%")
+        bindSym(R.id.sym_amp, "&")
+        bindSym(R.id.sym_star, "*")
+        bindSym(R.id.sym_lparen, "(")
+        bindSym(R.id.sym_rparen, ")")
+        bindSym(R.id.sym_underscore, "_")
+
+        // row 2
+        bindSym(R.id.sym_plus, "+")
+        bindSym(R.id.sym_minus, "-")
+        bindSym(R.id.sym_equal, "=")
+        bindSym(R.id.sym_slash, "/")
+        bindSym(R.id.sym_backslash, "\\")
+        bindSym(R.id.sym_pipe, "|")
+        bindSym(R.id.sym_tilde, "~")
+        bindSym(R.id.sym_lt, "<")
+        bindSym(R.id.sym_gt, ">")
+        bindSym(R.id.sym_pm, "±")
+
+        // row 3
+        bindSym(R.id.sym_comma, ",")
+        bindSym(R.id.sym_dot, ".")
+        bindSym(R.id.sym_question, "?")
+        bindSym(R.id.sym_colon, ":")
+        bindSym(R.id.sym_semicolon, ";")
+        bindSym(R.id.sym_quote, "'")
+        bindSym(R.id.sym_dquote, "\"")
+        bindSym(R.id.sym_ellipsis, "…")
+        bindSym(R.id.sym_bullet, "•")
+        bindSym(R.id.sym_hyphen, "-")
+
+        // symbols actions
+        val symSpace = view.findViewById<Button>(R.id.sym_space)
+        val symDelete = view.findViewById<Button>(R.id.sym_delete)
+        val symEnter = view.findViewById<Button>(R.id.sym_enter)
+
+        symSpace.setOnClickListener {
+            currentInputConnection?.commitText(" ", 1)
+        }
+
+        symDelete.setOnClickListener {
+            val ic = currentInputConnection ?: return@setOnClickListener
+            ic.deleteSurroundingText(1, 0)
+        }
+        symDelete.setOnLongClickListener {
+            deletePreviousSentence()
+            true
+        }
+
+        symEnter.setOnClickListener {
+            currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_DONE)
+            currentInputConnection?.commitText("\n", 1)
+        }
 
         // LETTER KEYS + CAPS
         fun bindKey(id: Int, char: String) {
@@ -176,17 +261,25 @@ class XenosKeyboardService : InputMethodService() {
         bindKey(R.id.key_m, "m")
 
         // Space
-        view.findViewById<Button>(R.id.key_space).setOnClickListener {
+        val spaceBtn = view.findViewById<Button>(R.id.key_space)
+        spaceBtn.setOnClickListener {
             currentInputConnection?.commitText(" ", 1)
         }
 
-        // Delete
-        view.findViewById<Button>(R.id.key_delete).setOnClickListener {
-            currentInputConnection?.deleteSurroundingText(1, 0)
+        // Delete with long-press sentence delete
+        val deleteBtn = view.findViewById<Button>(R.id.key_delete)
+        deleteBtn.setOnClickListener {
+            val ic = currentInputConnection ?: return@setOnClickListener
+            ic.deleteSurroundingText(1, 0)
+        }
+        deleteBtn.setOnLongClickListener {
+            deletePreviousSentence()
+            true
         }
 
         // Enter
-        view.findViewById<Button>(R.id.key_enter).setOnClickListener {
+        val enterBtn = view.findViewById<Button>(R.id.key_enter)
+        enterBtn.setOnClickListener {
             currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_DONE)
             currentInputConnection?.commitText("\n", 1)
         }
@@ -213,20 +306,54 @@ class XenosKeyboardService : InputMethodService() {
         return view
     }
 
+    // Delete previous sentence/line or selection
+    private fun deletePreviousSentence() {
+        val ic = currentInputConnection ?: return
+
+        val selected = ic.getSelectedText(0)
+        if (!selected.isNullOrEmpty()) {
+            ic.commitText("", 1)
+            return
+        }
+
+        val before = ic.getTextBeforeCursor(300, 0) ?: ""
+        if (before.isEmpty()) return
+
+        val lastDot = before.lastIndexOf('.')
+        val lastBang = before.lastIndexOf('!')
+        val lastQ = before.lastIndexOf('?')
+        val lastNewline = before.lastIndexOf('\n')
+
+        val lastBoundary = listOf(lastDot, lastBang, lastQ, lastNewline).maxOrNull() ?: -1
+        val toDelete = if (lastBoundary == -1) before.length else before.length - lastBoundary - 1
+        ic.deleteSurroundingText(toDelete, 0)
+    }
+
     private fun applyTilesMode(root: View, tilesOn: Boolean) {
         val ids = listOf(
+            // numbers
             R.id.key_1, R.id.key_2, R.id.key_3, R.id.key_4, R.id.key_5,
             R.id.key_6, R.id.key_7, R.id.key_8, R.id.key_9, R.id.key_0,
+            // letters
             R.id.key_q, R.id.key_w, R.id.key_e, R.id.key_r, R.id.key_t,
             R.id.key_y, R.id.key_u, R.id.key_i, R.id.key_o, R.id.key_p,
             R.id.key_a, R.id.key_s, R.id.key_d, R.id.key_f, R.id.key_g,
             R.id.key_h, R.id.key_j, R.id.key_k, R.id.key_l,
             R.id.key_z, R.id.key_x, R.id.key_c, R.id.key_v,
             R.id.key_b, R.id.key_n, R.id.key_m,
+            // main special keys + toolbar
             R.id.key_shift, R.id.key_theme, R.id.key_space,
             R.id.key_delete, R.id.key_enter,
-            R.id.btn_clipboard, R.id.btn_fonts, R.id.btn_settings,
-            R.id.btn_change_mode
+            R.id.btn_clipboard, R.id.btn_settings,
+            R.id.btn_change_mode,
+            // symbols
+            R.id.sym_exclam, R.id.sym_at, R.id.sym_hash, R.id.sym_dollar, R.id.sym_percent,
+            R.id.sym_amp, R.id.sym_star, R.id.sym_lparen, R.id.sym_rparen, R.id.sym_underscore,
+            R.id.sym_plus, R.id.sym_minus, R.id.sym_equal, R.id.sym_slash, R.id.sym_backslash,
+            R.id.sym_pipe, R.id.sym_tilde, R.id.sym_lt, R.id.sym_gt, R.id.sym_pm,
+            R.id.sym_comma, R.id.sym_dot, R.id.sym_question, R.id.sym_colon, R.id.sym_semicolon,
+            R.id.sym_quote, R.id.sym_dquote, R.id.sym_ellipsis, R.id.sym_bullet, R.id.sym_hyphen,
+            R.id.sym_to_letters, R.id.sym_space, R.id.sym_delete, R.id.sym_enter
         )
         val res = if (tilesOn) R.drawable.xenos_key_neon_cyan else R.drawable.xenos_key_black
         for (id in ids) {

@@ -24,7 +24,7 @@ fun LockedAppsScreen(
     lockPrefs: SharedPreferences,
     lockedApps: Set<String>,
     batteryMode: BatterySaverMode,
-    lockTimeoutMinutes: Int,
+    lockTimeoutMinutes: Int?,
     hideLockedNotifications: Boolean,
     onHideLockedNotificationsChange: (Boolean) -> Unit,
     onLockTimeoutChange: (Int) -> Unit,
@@ -38,7 +38,7 @@ fun LockedAppsScreen(
             batteryMode = batteryMode
         )
 
-        var timerText by remember { mutableStateOf(lockTimeoutMinutes.toString()) }
+        var timerText by remember { mutableStateOf(lockTimeoutMinutes?.toString() ?: "") }
         var timerError by remember { mutableStateOf<String?>(null) }
 
         Column(

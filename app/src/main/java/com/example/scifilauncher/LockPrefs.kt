@@ -2,6 +2,12 @@ package com.example.scifilauncher
 
 import android.content.SharedPreferences
 
+// Per-app lock temporarily disabled (kept as a single switch so it's a one-line revert): tapping
+// an app icon no longer asks for fingerprint/PIN, even if one is set up. Everything else about
+// the lock feature (PIN setup, 2-Step Verify, Locked Apps picker, recovery) still works normally
+// from the Security screen - it's just not enforced on app launch right now.
+const val APP_LOCK_ENFORCED = false
+
 // When user has successfully passed PIN for a locked app
 fun recordUnlock(prefs: SharedPreferences) {
     val now = System.currentTimeMillis()
@@ -56,4 +62,53 @@ fun loadHideLockedNotifications(prefs: SharedPreferences): Boolean {
 
 fun saveHideLockedNotifications(prefs: SharedPreferences, value: Boolean) {
     prefs.edit().putBoolean("hide_locked_notifications", value).apply()
+}
+
+// --- App PIN (fallback passcode when biometrics aren't available/fail) ---
+// Reconstructed: this section (app PIN, 2-Step Verify, recovery) was uncommitted working-tree
+// code lost to an accidental `git checkout`. Rebuilt from every call site still present in
+// MainActivity.kt/SecurityScreen.kt/ScifiAccessibilityService.kt (keys match the still-intact
+// MainActivity.saveAppPin member: "app_pin" / "app_pin_recovery").
+
+fun loadAppPin(prefs: SharedPreferences): String? = prefs.getString("app_pin", null)
+
+fun loadAppPinRecoveryAnswer(prefs: SharedPreferences): String? = prefs.getString("app_pin_recovery", null)
+
+fun clearAppPin(prefs: SharedPreferences) {
+    prefs.edit().remove("app_pin").remove("app_pin_recovery").apply()
+}
+
+// --- 2-Step Verify (spoken passphrase, matched via STT) ---
+
+fun isTwoStepVerifyEnabled(prefs: SharedPreferences): Boolean =
+    prefs.getBoolean("two_step_verify_enabled", false)
+
+fun setTwoStepVerifyEnabled(prefs: SharedPreferences, enabled: Boolean) {
+    prefs.edit().putBoolean("two_step_verify_enabled", enabled).apply()
+}
+
+fun loadVoicePassphrase(prefs: SharedPreferences): String? = prefs.getString("voice_passphrase", null)
+
+fun saveVoicePassphrase(prefs: SharedPreferences, passphrase: String) {
+    prefs.edit().putString("voice_passphrase", passphrase).apply()
+}
+
+// Whether a given app should currently be treated as locked - locked-apps membership, plus an
+// unconditional override while Sequence Mode (anti-theft) lockdown is active.
+fun isAppLockedRightNow(
+    prefs: SharedPreferences,
+    packageName: String,
+    lockedApps: Set<String>
+): Boolean {
+    if (isSequenceModeActive(prefs)) return true
+    return lockedApps.contains(packageName)
+}
+
+// Used by the PIN-recovery flow: wipes the PIN and drops every individually-locked app / unlock
+// session, so recovering access doesn't leave old locks still armed against the new PIN.
+fun clearAllLocksAndUnlocks(prefs: SharedPreferences) {
+    prefs.edit()
+        .remove("locked_apps")
+        .remove("last_unlock_time")
+        .apply()
 }

@@ -19,27 +19,17 @@ import kotlin.random.Random
 val MatrixGreen = Color(0xFF09C20C)
 
 /**
- * Dark mode:
- *  - base: nearly black with slight theme tint
- *  - rain: themeColor tail, white head
- *
- * Light mode:
- *  - base: light theme tint
- *  - rain: black tail, dark head
+ * The home dashboard's matrix rain never changes with Dark/Light mode - that toggle is for
+ * text/foreground legibility on panels like Settings and Security, not this. isDark is still
+ * accepted (callers pass it through) but deliberately unused for rendering here.
  */
 @Composable
 fun MatrixBackground(
     themeColor: Color,
-    isDark: Boolean,
+    @Suppress("UNUSED_PARAMETER") isDark: Boolean,
     batteryMode: BatterySaverMode
 ) {
-    val baseBackground = if (isDark) {
-        // close to old MatrixBackground, but a bit tinted by theme
-        Color(0xFF020202)
-    } else {
-        // light mode: very light theme tint
-        themeColor.copy(alpha = 0.08f)
-    }
+    val baseBackground = Color(0xFF020202)
 
     Box(
         modifier = Modifier
@@ -74,7 +64,7 @@ fun MatrixRain(
     modifier: Modifier = Modifier,
     columnCount: Int = 30,
     speed: Float = 80f,
-    isDark: Boolean,
+    @Suppress("UNUSED_PARAMETER") isDark: Boolean,
     themeColor: Color,
     batteryMode: BatterySaverMode
 ) {
@@ -104,8 +94,8 @@ fun MatrixRain(
         val rows = (size.height / charHeight).toInt() + 10
         val rnd = Random(randomSeed)
 
-        val tailColorBase = if (isDark) themeColor else Color.Black
-        val headColor = if (isDark) Color.White else Color(0xFF111111)
+        val tailColorBase = themeColor
+        val headColor = Color.White
 
         for (col in 0 until columnCount) {
             val baseX = col * widthPerColumn + widthPerColumn / 2f

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Base almost-black -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FF020202" />
+        </shape>
+    </item>
+
+    <!-- Dark red glow -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:gradientRadius="900dp"
+                android:centerX="50%"
+                android:centerY="30%"
+                android:startColor="#40FF1744"/> <!-- transparent-ish red -->
+            android:endColor="@android:color/transparent" />
+        </shape>
+    </item>
+
+</layer-list>

@@ -1,11 +1,8 @@
 package com.example.scifilauncher
 
 import android.bluetooth.BluetoothAdapter
-import android.content.Intent
 import android.net.wifi.WifiManager
 import android.provider.Settings
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -23,7 +20,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -40,20 +36,14 @@ fun DashboardScreen(
     batteryMode: BatterySaverMode,
     onBackToWelcome: () -> Unit,
     onOpenApps: () -> Unit,
+    onOpenRecents: () -> Unit,
     onResetLauncher: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSecurity: () -> Unit,
     favoriteApps: List<AppItem>
 ) {
     val context = LocalContext.current
-    val expanded = remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
-
-    val panelHeight by animateDpAsState(
-        targetValue = if (expanded.value) 220.dp else 56.dp,
-        animationSpec = tween(durationMillis = 350),
-        label = "topPanelHeight"
-    )
 
     // TIME + DATE
     var timeText by remember { mutableStateOf("") }
@@ -127,12 +117,9 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
-                // LEFT EXPANDABLE PILL
+                // LEFT SECURITY SHORTCUT
                 LeftControlPill(
                     themeColor = themeColor,
-                    panelHeight = panelHeight,
-                    expanded = expanded.value,
-                    onToggleExpand = { expanded.value = !expanded.value },
                     onOpenSecurity = onOpenSecurity
                 )
 
@@ -146,8 +133,7 @@ fun DashboardScreen(
                 ) {
                     HudCircle(
                         themeColor = themeColor,
-                        size = 140.dp,
-                        currentThemeIndex = currentThemeIndex
+                        size = 140.dp
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -391,18 +377,12 @@ fun DashboardScreen(
             GlitchNavLetter(
                 letter = "O",
                 color = themeColor,
-                onClick = {
-                    val intent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    context.startActivity(intent)
-                }
+                onClick = { /* already home */ }
             )
             GlitchNavLetter(
                 letter = "S",
                 color = themeColor,
-                onClick = { onOpenApps() }
+                onClick = { onOpenRecents() }
             )
         }
 
@@ -458,19 +438,14 @@ fun DashboardScreen(
 @Composable
 private fun LeftControlPill(
     themeColor: Color,
-    panelHeight: Dp,
-    expanded: Boolean,
-    onToggleExpand: () -> Unit,
     onOpenSecurity: () -> Unit
 ) {
-    val context = LocalContext.current
-
     Box(
         modifier = Modifier
             .padding(top = 72.dp)
             .width(56.dp)
-            .height(panelHeight)
-            .clickable { onToggleExpand() }
+            .height(56.dp)
+            .clickable { onOpenSecurity() }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
@@ -486,109 +461,22 @@ private fun LeftControlPill(
                 cornerRadius = CornerRadius(radius, radius),
                 style = Stroke(width = 3f)
             )
-        }
 
-        if (expanded) {
-            val clickHeight = 44.dp
-
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 8.dp),
-                verticalArrangement = Arrangement.SpaceEvenly,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(clickHeight)
-                        .clickable {
-                            context.startActivity(
-                                Intent(Settings.ACTION_WIFI_SETTINGS)
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "WiFi",
-                        color = themeColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(clickHeight)
-                        .clickable {
-                            context.startActivity(
-                                Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Bluetooth",
-                        color = themeColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(clickHeight)
-                        .clickable {
-                            context.startActivity(
-                                Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS)
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Flight mode",
-                        color = themeColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(clickHeight)
-                        .clickable {
-                            context.startActivity(
-                                Intent(Settings.ACTION_DATE_SETTINGS)
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Date & time",
-                        color = themeColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(clickHeight)
-                        .clickable { onOpenSecurity() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Security",
-                        color = themeColor,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
+            // Shield glyph hinting at the Security shortcut
+            val cx = w / 2f
+            val cy = h / 2f
+            val shieldW = w * 0.34f
+            val shieldH = h * 0.4f
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(cx, cy - shieldH / 2f)
+                lineTo(cx + shieldW / 2f, cy - shieldH / 4f)
+                lineTo(cx + shieldW / 2f, cy + shieldH / 6f)
+                lineTo(cx, cy + shieldH / 2f)
+                lineTo(cx - shieldW / 2f, cy + shieldH / 6f)
+                lineTo(cx - shieldW / 2f, cy - shieldH / 4f)
+                close()
             }
+            drawPath(path, color = themeColor, style = Stroke(width = 2.5f))
         }
     }
 }
