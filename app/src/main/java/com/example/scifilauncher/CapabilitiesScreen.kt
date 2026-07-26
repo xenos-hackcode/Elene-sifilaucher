@@ -53,6 +53,10 @@ private val CAPABILITIES = listOf(
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Contacts"
     ),
     CapabilityInfo(
+        "SMS", "Sends a Sequence Mode anti-theft alert by text message to resolved family contacts, alongside a WhatsApp attempt - SMS doesn't need WhatsApp installed, the Accessibility service, or any internet connection to go through.",
+        ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > SMS"
+    ),
+    CapabilityInfo(
         "Location", "Used by Sequence Mode to record the device's location if it's ever remotely locked or wiped, and by Nearby Devices to scan your WiFi network.",
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Location"
     ),

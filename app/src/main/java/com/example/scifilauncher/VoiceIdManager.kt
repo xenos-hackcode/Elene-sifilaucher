@@ -32,54 +32,71 @@ object VoiceIdManager {
     suspend fun enrollStyle(context: Context, style: VoiceStyle, rawSamples: List<FloatArray>): Boolean =
         withContext(Dispatchers.Default) {
             if (rawSamples.isEmpty()) return@withContext false
-            val embedder = SpeakerEmbedder(context)
-            try {
-                val existing = loadEmbeddings(context, style).toMutableList()
-                rawSamples.forEach { existing.add(embedder.embed(it)) }
-                val capped = if (existing.size > MAX_REFERENCES_PER_STYLE) {
-                    existing.takeLast(MAX_REFERENCES_PER_STYLE)
-                } else {
-                    existing
+            runCatching {
+                val embedder = SpeakerEmbedder(context)
+                try {
+                    val existing = loadEmbeddings(context, style).toMutableList()
+                    rawSamples.forEach { existing.add(embedder.embed(it)) }
+                    val capped = if (existing.size > MAX_REFERENCES_PER_STYLE) {
+                        existing.takeLast(MAX_REFERENCES_PER_STYLE)
+                    } else {
+                        existing
+                    }
+                    saveEmbeddings(context, style, capped)
+                    true
+                } finally {
+                    embedder.close()
                 }
-                saveEmbeddings(context, style, capped)
-                true
-            } finally {
-                embedder.close()
+            }.getOrElse {
+                SystemEventLog.record(context, "VoiceID", "enrollStyle(${style.name}) failed: ${it.message}")
+                false
             }
         }
 
     /** Returns the highest cosine similarity against any of this style's stored reference
-     * points, or null if that style isn't enrolled. Compare against `style.threshold`. */
+     * points, or null if that style isn't enrolled - also null if the model itself fails to
+     * load/run (falls back to fingerprint-only, same as "not enrolled"). Compare against
+     * `style.threshold`. */
     suspend fun verify(context: Context, rawSample: FloatArray, style: VoiceStyle): Float? =
         withContext(Dispatchers.Default) {
             val stored = loadEmbeddings(context, style)
             if (stored.isEmpty()) return@withContext null
-            val embedder = SpeakerEmbedder(context)
-            try {
-                val live = embedder.embed(rawSample)
-                stored.maxOf { cosineSimilarity(it, live) }
-            } finally {
-                embedder.close()
+            runCatching {
+                val embedder = SpeakerEmbedder(context)
+                try {
+                    val live = embedder.embed(rawSample)
+                    stored.maxOf { cosineSimilarity(it, live) }
+                } finally {
+                    embedder.close()
+                }
+            }.getOrElse {
+                SystemEventLog.record(context, "VoiceID", "verify(${style.name}) failed: ${it.message}")
+                null
             }
         }
 
     /** For arbitrary speech where the utterance's "style" isn't known up front (general voice
      * commands/chat) - embeds once, compares against every enrolled style's best-matching
      * reference, and returns whichever scored highest relative to its own threshold. Null if
-     * nothing enrolled. */
+     * nothing enrolled, or if the model itself fails to load/run. */
     suspend fun verifyBest(context: Context, rawSample: FloatArray): Pair<VoiceStyle, Float>? =
         withContext(Dispatchers.Default) {
             val styles = enrolledStyles(context)
             if (styles.isEmpty()) return@withContext null
-            val embedder = SpeakerEmbedder(context)
-            try {
-                val live = embedder.embed(rawSample)
-                styles.mapNotNull { style ->
-                    val refs = loadEmbeddings(context, style)
-                    if (refs.isEmpty()) null else style to refs.maxOf { cosineSimilarity(it, live) }
-                }.maxByOrNull { (style, score) -> score - style.threshold }
-            } finally {
-                embedder.close()
+            runCatching {
+                val embedder = SpeakerEmbedder(context)
+                try {
+                    val live = embedder.embed(rawSample)
+                    styles.mapNotNull { style ->
+                        val refs = loadEmbeddings(context, style)
+                        if (refs.isEmpty()) null else style to refs.maxOf { cosineSimilarity(it, live) }
+                    }.maxByOrNull { (style, score) -> score - style.threshold }
+                } finally {
+                    embedder.close()
+                }
+            }.getOrElse {
+                SystemEventLog.record(context, "VoiceID", "verifyBest failed: ${it.message}")
+                null
             }
         }
 

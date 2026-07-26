@@ -28,17 +28,36 @@ class TrackerBlockVpnService : VpnService() {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val blockedDomains: Set<String> by lazy { loadBlocklist() }
 
+    // Restart attempts after the interface dies unexpectedly (not a deliberate stop) are capped
+    // to avoid spin-looping forever if something's persistently broken (e.g. draining battery
+    // retrying every few milliseconds) - 3 restarts within a rolling minute, then give up and
+    // leave a record of it rather than retrying silently forever.
+    private val recentRestarts = mutableListOf<Long>()
+
     companion object {
         var isRunning: Boolean = false
             private set
         private const val TAG = "TrackerBlockVpn"
         private const val UPSTREAM_DNS = "1.1.1.1"
+        private const val FALLBACK_DNS = "8.8.8.8"
+        private const val MAX_RESTARTS_PER_MINUTE = 3
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand() called")
         startVpn()
         return START_STICKY
+    }
+
+    // VpnService.onRevoke() fires when the system or another app takes over as the active VPN,
+    // or the user manually disables this one from system settings - without handling it, the
+    // service's own isRunning/vpnInterface state goes stale and it doesn't know it stopped
+    // actually protecting anything.
+    override fun onRevoke() {
+        Log.w(TAG, "onRevoke() - VPN was taken over or disabled externally")
+        SystemEventLog.record(this, "VPN", "Revoked (system or another app took over)")
+        stopVpn()
+        super.onRevoke()
     }
 
     override fun onDestroy() {
@@ -89,8 +108,34 @@ class TrackerBlockVpnService : VpnService() {
         isRunning = true
         job = scope.launch {
             runCatching { runLoop(vpnInterface!!) }
-                .onFailure { Log.e(TAG, "VPN loop stopped", it) }
+                .onFailure { e ->
+                    Log.e(TAG, "VPN loop stopped", e)
+                    val wasDeliberateStop = !isRunning
+                    if (!wasDeliberateStop) attemptRestart(e)
+                }
         }
+    }
+
+    /** The interface died on its own (not via stopVpn()/onRevoke()) - try to bring it back up,
+     * but only up to MAX_RESTARTS_PER_MINUTE times so a persistent failure can't spin-loop
+     * forever draining the battery. */
+    private fun attemptRestart(cause: Throwable) {
+        val now = System.currentTimeMillis()
+        recentRestarts.removeAll { now - it > 60_000L }
+        if (recentRestarts.size >= MAX_RESTARTS_PER_MINUTE) {
+            SystemEventLog.record(
+                this, "VPN",
+                "Gave up after ${recentRestarts.size} restarts in the last minute (last error: ${cause.message})"
+            )
+            stopVpn()
+            return
+        }
+        recentRestarts.add(now)
+        SystemEventLog.record(this, "VPN", "Interface died (${cause.message}), restarting (${recentRestarts.size}/$MAX_RESTARTS_PER_MINUTE)")
+        runCatching { vpnInterface?.close() }
+        vpnInterface = null
+        isRunning = false
+        startVpn()
     }
 
     private fun stopVpn() {
@@ -163,25 +208,32 @@ class TrackerBlockVpnService : VpnService() {
         dnsStart: Int,
         output: FileOutputStream
     ) {
-        runCatching {
-            val udpLength = ((packet[udpStart + 4].toInt() and 0xFF) shl 8) or (packet[udpStart + 5].toInt() and 0xFF)
-            val dnsPayload = packet.copyOfRange(dnsStart, minOf(packet.size, udpStart + udpLength))
+        val udpLength = ((packet[udpStart + 4].toInt() and 0xFF) shl 8) or (packet[udpStart + 5].toInt() and 0xFF)
+        val dnsPayload = packet.copyOfRange(dnsStart, minOf(packet.size, udpStart + udpLength))
 
-            val socket = DatagramSocket()
-            protect(socket)
-            socket.soTimeout = 5000
-
-            socket.send(DatagramPacket(dnsPayload, dnsPayload.size, InetSocketAddress(UPSTREAM_DNS, 53)))
-
-            val replyBuf = ByteArray(1024)
-            val replyPacket = DatagramPacket(replyBuf, replyBuf.size)
-            socket.receive(replyPacket)
-            socket.close()
-
-            val dnsReply = replyBuf.copyOf(replyPacket.length)
-            output.write(buildReplyPacket(packet, ihl, dnsReply))
-        }.onFailure { Log.d(TAG, "DNS forward failed", it) }
+        // 1.1.1.1 is reliable but not infallible - a single upstream with no fallback means one
+        // resolver hiccup looks like "the whole internet is down". Try the primary, then 8.8.8.8
+        // once before giving up on this particular query.
+        val reply = queryUpstream(UPSTREAM_DNS, dnsPayload) ?: queryUpstream(FALLBACK_DNS, dnsPayload)
+        if (reply != null) {
+            runCatching { output.write(buildReplyPacket(packet, ihl, reply)) }
+        }
     }
+
+    private fun queryUpstream(server: String, dnsPayload: ByteArray): ByteArray? = runCatching {
+        val socket = DatagramSocket()
+        protect(socket)
+        socket.soTimeout = 5000
+
+        socket.send(DatagramPacket(dnsPayload, dnsPayload.size, InetSocketAddress(server, 53)))
+
+        val replyBuf = ByteArray(1024)
+        val replyPacket = DatagramPacket(replyBuf, replyBuf.size)
+        socket.receive(replyPacket)
+        socket.close()
+
+        replyBuf.copyOf(replyPacket.length)
+    }.onFailure { Log.d(TAG, "DNS forward to $server failed", it) }.getOrNull()
 
     private fun buildBlockedResponse(packet: ByteArray, ihl: Int, dnsStart: Int): ByteArray? {
         val dnsQuery = packet.copyOfRange(dnsStart, packet.size)

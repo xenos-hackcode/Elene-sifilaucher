@@ -27,6 +27,11 @@ class SequenceAlertWorker(context: Context, params: WorkerParameters) : Coroutin
         withContext(Dispatchers.IO) {
             resolveFamilyContacts(applicationContext).forEach { contact ->
                 sendWhatsAppAlert(applicationContext, contact.phoneNumber, message)
+                val smsSent = sendSmsAlert(applicationContext, contact.phoneNumber, message)
+                SystemEventLog.record(
+                    applicationContext, "SequenceMode",
+                    "Alert to ${contact.label}: WhatsApp attempted, SMS ${if (smsSent) "sent" else "failed/unavailable"}"
+                )
             }
         }
 

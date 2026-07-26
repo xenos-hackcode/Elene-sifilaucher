@@ -153,6 +153,29 @@ fun sendWhatsAppAlert(context: Context, phoneNumber: String, message: String) {
     }, 3500L)
 }
 
+/** Direct SMS alert over the cellular network - unlike WhatsApp above, this doesn't depend on
+ * WhatsApp being installed, the Accessibility service being enabled, or any internet/data
+ * connection at all (SMS rides the cell network directly), so it's sent unconditionally
+ * alongside the WhatsApp attempt rather than only as a detected fallback - there's no reliable
+ * signal from the WhatsApp tap-to-send that it actually succeeded. */
+@SuppressLint("MissingPermission")
+fun sendSmsAlert(context: Context, phoneNumber: String, message: String): Boolean {
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+        return false
+    }
+    return runCatching {
+        val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            context.getSystemService(android.telephony.SmsManager::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            android.telephony.SmsManager.getDefault()
+        }
+        val parts = smsManager.divideMessage(message)
+        smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null)
+        true
+    }.getOrDefault(false)
+}
+
 fun enterSequenceMode(context: Context, lockPrefs: SharedPreferences) {
     if (isSequenceModeActive(lockPrefs)) return
 
@@ -163,6 +186,8 @@ fun enterSequenceMode(context: Context, lockPrefs: SharedPreferences) {
 
     captureLastLocation(context, lockPrefs)
     SequenceDeviceAdminReceiver.lockNow(context)
+    LockNotificationListenerService.instance?.applySilence(true)
+    SystemEventLog.record(context, "SequenceMode", "Armed")
 
     val alertRequest = PeriodicWorkRequestBuilder<SequenceAlertWorker>(12, TimeUnit.HOURS).build()
     WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -184,6 +209,8 @@ fun exitSequenceMode(context: Context, lockPrefs: SharedPreferences) {
         .apply()
     WorkManager.getInstance(context).cancelUniqueWork(SEQUENCE_ALERT_WORK_NAME)
     WorkManager.getInstance(context).cancelUniqueWork(SEQUENCE_WIPE_WORK_NAME)
+    LockNotificationListenerService.instance?.applySilence(false)
+    SystemEventLog.record(context, "SequenceMode", "Exited")
 }
 
 /** Called only if Sequence Mode is still active ~30 days after it started (never recovered). */

@@ -311,11 +311,15 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
     private var pendingBiometricCallback: Pair<() -> Unit, () -> Unit>? = null
 
+    private var pendingBiometricLabel: String = "Device action"
+
     private val biometricAuthLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val callback = pendingBiometricCallback
         pendingBiometricCallback = null
+        val outcome = if (result.resultCode == RESULT_OK) "APPROVED" else "DENIED/CANCELLED"
+        SystemEventLog.record(this, "Biometric", "$pendingBiometricLabel: $outcome")
         if (result.resultCode == RESULT_OK) {
             callback?.first?.invoke()
         } else {
@@ -344,6 +348,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             add(android.Manifest.permission.RECORD_AUDIO)
             add(android.Manifest.permission.CAMERA)
             add(android.Manifest.permission.READ_CONTACTS)
+            add(android.Manifest.permission.SEND_SMS)
             add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -2131,7 +2136,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             AppLogScreen(
                                 themeColor = themeColor,
                                 isDark = isDark,
-                                entries = ErrorLog.loadAll(this@MainActivity),
+                                entries = (ErrorLog.loadAll(this@MainActivity) + SystemEventLog.loadAll(this@MainActivity))
+                                    .sortedByDescending { it.timestamp },
                                 onBack = {
                                     showAppLog = false
                                     showSecurity = true
@@ -2736,6 +2742,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         onFailure: () -> Unit
     ) {
         pendingBiometricCallback = onSuccess to onFailure
+        pendingBiometricLabel = title ?: "Device action"
+        SystemEventLog.record(this, "Biometric", "$pendingBiometricLabel: shown")
         runCatching {
             biometricAuthLauncher.launch(
                 Intent(this, BiometricAuthActivity::class.java).apply {
