@@ -19,7 +19,7 @@ data class EleneCommandDoc(val command: String, val sayThis: String, val whatItD
 /** Kept in sync by hand with the command schema documented in the backend's system prompt
  * (backend/elene/main.py) - this is what Elene can actually be told to do, not a generated list. */
 val ELENE_COMMANDS: List<EleneCommandDoc> = listOf(
-    EleneCommandDoc("open_app", "\"open WhatsApp\"", "Launches an app by its plain name. Locked apps ask for PIN/fingerprint first."),
+    EleneCommandDoc("open_app", "\"open WhatsApp\"", "Launches an app by its plain name."),
     EleneCommandDoc("search_app", "\"do I have Spotify\", \"look for TikTok\"", "Opens the app grid with that search typed in - doesn't launch anything."),
     EleneCommandDoc("open_page", "\"open settings\", \"show my apps\", \"open games\"", "Navigates to one of THIS app's own screens (home/settings/games/apps)."),
     EleneCommandDoc("open_android_settings", "\"open android settings\", \"open phone settings\"", "Opens the phone's system Settings app, not this app's own settings."),

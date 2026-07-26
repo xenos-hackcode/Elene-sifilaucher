@@ -90,7 +90,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     private var eleneLastSpokenText: String? = null
     private var eleneSpeechFailed: Boolean = false
     private var pendingSpeechDoneCallback: (() -> Unit)? = null
-    private var pendingSequenceModeTimeout: kotlinx.coroutines.Job? = null
 
     // The overlay bubble (ScifiAccessibilityService) is the only Elene command handler now -
     // for the handful of commands that genuinely need a visible Activity UI (Settings/Security
@@ -208,7 +207,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
     private fun launchQrScan(onResult: ((String) -> Unit)? = null) {
         qrScanResultCallback = onResult
-        suppressNextLock = true
         runCatching {
             qrScanLauncher.launch(
                 com.journeyapps.barcodescanner.ScanOptions()
@@ -217,7 +215,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     .setOrientationLocked(false)
             )
         }.onFailure {
-            suppressNextLock = false
             qrScanResultCallback = null
         }
     }
@@ -311,11 +308,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     // Every device-owner-level action goes through this before it happens. Never
     // auto-approves on silence - the caller is responsible for snoozing on a timeout.
     private var pendingConfirmationApprove: (() -> Unit)? = null
-
-    // See onStop() - set immediately before launching a sub-activity we expect to return
-    // control to us shortly (biometric prompt, QR scanner), so that transient onStop() isn't
-    // mistaken for the user actually leaving the launcher.
-    private var suppressNextLock = false
 
     private var pendingBiometricCallback: Pair<() -> Unit, () -> Unit>? = null
 
@@ -678,12 +670,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     // launcher-wide apps state so we can refresh onResume
     private var allAppsState by mutableStateOf(listOf<AppItem>())
 
-    // The launcher's own home screen had no lock at all - only individual app taps did.
-    // Turning the screen off and back on (or leaving and returning to the app) landed
-    // straight on the unlocked dashboard, which is the actual security hole. Set on
-    // onStop() (screen off / backgrounded), cleared only after a real unlock.
-    private var launcherNeedsUnlock by mutableStateOf(false)
-
     // assistant state
     private var waitingForReadConfirmation: Boolean = false
     private var readingAllMissed: Boolean = false
@@ -743,14 +729,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             FontSizeOption.HUGE -> 20f
         }
     }
-
-    fun saveAppPin(prefs: SharedPreferences, pin: String, recovery: String) {
-        prefs.edit()
-            .putString("app_pin", pin)
-            .putString("app_pin_recovery", recovery)
-            .apply()
-    }
-
 
     fun loadUserName(prefs: SharedPreferences): String? {
         return prefs.getString(KEY_USER_NAME, null)
@@ -986,10 +964,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var kioskModeEnabled by rememberSaveable {
                     mutableStateOf(getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("kiosk_mode_enabled", false))
                 }
-                var twoStepVerifyEnabled by rememberSaveable {
-                    mutableStateOf(isTwoStepVerifyEnabled(getSharedPreferences("lock_prefs", MODE_PRIVATE)))
-                }
-                var showVoicePassphraseSetup by remember { mutableStateOf(false) }
                 var voiceActivationEnabled by rememberSaveable {
                     mutableStateOf(lockPrefs.getBoolean("voice_activation_enabled", false))
                 }
@@ -1032,9 +1006,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
                 var batteryMode by remember { mutableStateOf(loadBatterySaverMode(batteryPrefs)) }
                 var fontSizeOption by remember { mutableStateOf(loadFontSize(fontPrefs)) }
-                val lockTimeoutMinutes = loadLockTimeoutMinutes(lockPrefs)
-                val hideLockedNotifications = loadHideLockedNotifications(lockPrefs)
-                val lockedAppsSet = loadLockedApps(lockPrefs)
                 var showMoreApps by remember { mutableStateOf(false) }
 
                 val contextAndroid = LocalContext.current
@@ -1062,7 +1033,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showRecents by rememberSaveable { mutableStateOf(false) }
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var showSecurity by rememberSaveable { mutableStateOf(false) }
-                var showLockedApps by rememberSaveable { mutableStateOf(false) }
                 var showHiddenApps by rememberSaveable { mutableStateOf(false) }
                 var showFavoriteApps by rememberSaveable { mutableStateOf(false) }
                 var showBatteryAllowedApps by rememberSaveable { mutableStateOf(false) }
@@ -1073,65 +1043,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showAbout by rememberSaveable { mutableStateOf(false) }
 
 
-                var appPin by rememberSaveable { mutableStateOf(loadAppPin(lockPrefs)) }
                 var hiddenApps by rememberSaveable { mutableStateOf(setOf<String>()) }
                 val phonePrefs = getSharedPreferences("phone_prefs", MODE_PRIVATE)
 
                 var favoriteAppsPkgs by rememberSaveable { mutableStateOf(setOf<String>()) }
-
-                var pendingLaunchPkg by remember { mutableStateOf<String?>(null) }
-                // The PIN-fallback dialog used to discard whatever callback the caller actually
-                // wanted and hardcode its own "launch pendingLaunchPkg directly" logic instead -
-                // harmless when pkg happened to be a real package name (tapping an app icon),
-                // silently broken once open_app started carrying a plain spoken name like
-                // "whatsapp" instead of a package id (getLaunchIntentForPackage("whatsapp")
-                // returns null, so nothing happens and you're just left wherever you were).
-                var pendingUnlockCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
-                var askForPinForLaunch by remember { mutableStateOf(false) }
-                var appLockPinFailCount by remember { mutableStateOf(0) }
-                var showAppLockRecovery by remember { mutableStateOf(false) }
-                var showAppLockNewPin by remember { mutableStateOf(false) }
-                var showLauncherPinCheck by remember { mutableStateOf(false) }
-
-                // Universal app-unlock gate: every app now goes through this, not just a
-                // hand-picked list. Biometric first (Android's own prompt already allows
-                // several tries before giving up), falling back to the passcode (3 tries)
-                // and finally the recovery question if that's exhausted too. If no passcode
-                // has ever been set, nothing is gated - there's nothing to unlock against.
-                fun requestAppUnlock(pkg: String, onUnlocked: () -> Unit) {
-                    // Marks the grace window ScifiAccessibilityService's Recents-lock-enforcement
-                    // checks, so the app coming to foreground right after this doesn't
-                    // immediately get treated as an unauthorized foreground change and re-gated.
-                    val unlock: () -> Unit = {
-                        AppLockCoordinator.markAuthorized()
-                        onUnlocked()
-                    }
-                    if (!APP_LOCK_ENFORCED || appPin.isNullOrBlank()) {
-                        unlock()
-                        return
-                    }
-                    val biometricManager = androidx.biometric.BiometricManager.from(this@MainActivity)
-                    val biometricAvailable = biometricManager.canAuthenticate(
-                        androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
-                    ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
-
-                    if (biometricAvailable) {
-                        showBiometricPrompt(
-                            onSuccess = unlock,
-                            onFailure = {
-                                appLockPinFailCount = 0
-                                pendingLaunchPkg = pkg
-                                pendingUnlockCallback = unlock
-                                askForPinForLaunch = true
-                            }
-                        )
-                    } else {
-                        appLockPinFailCount = 0
-                        pendingLaunchPkg = pkg
-                        pendingUnlockCallback = unlock
-                        askForPinForLaunch = true
-                    }
-                }
 
                 // Every device-owner-level action (install, uninstall, force-stop, permission
                 // grant, etc.) is asked for here first - visually and out loud - and logged
@@ -1273,7 +1188,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         showRecents = recents
                         showSettings = settings
                         showSecurity = security
-                        showLockedApps = false
                         showHiddenApps = false
                         showFavoriteApps = false
                         showBatteryAllowedApps = false
@@ -1353,21 +1267,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
                     when (verb) {
                         "open_app" -> if (arg != null) {
-                            // This has to go through the same unlock gate as tapping the app
-                            // icon does - a voice command was bypassing it entirely before,
-                            // which defeats the whole point of locking apps behind biometrics.
-                            if (!appPin.isNullOrBlank()) {
-                                commandReplyOverride = "Confirming your identity first."
-                                requestAppUnlock(arg) {
-                                    if (!openAppSmart(arg, allAppsState, favoriteAppsPkgs, contextAndroid)) {
-                                        speak("Negative. I couldn't find an app matching \"$arg\" installed on this phone.")
-                                    }
-                                }
-                            } else {
-                                val opened = openAppSmart(arg, allAppsState, favoriteAppsPkgs, contextAndroid)
-                                if (!opened) {
-                                    commandReplyOverride = "Negative. I couldn't find an app matching \"$arg\" installed on this phone."
-                                }
+                            val opened = openAppSmart(arg, allAppsState, favoriteAppsPkgs, contextAndroid)
+                            if (!opened) {
+                                commandReplyOverride = "Negative. I couldn't find an app matching \"$arg\" installed on this phone."
                             }
                         }
                         // Distinct from "open_app": this navigates to the app grid and types
@@ -1752,20 +1654,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     }
                 }
 
-                // Fires the one-time voice recording when 2-Step Verify is first turned on.
-                LaunchedEffect(showVoicePassphraseSetup) {
-                    if (showVoicePassphraseSetup) {
-                        captureVoicePassphrase("Say your passphrase to set it up") { spoken ->
-                            if (!spoken.isNullOrBlank()) {
-                                saveVoicePassphrase(lockPrefs, spoken)
-                                twoStepVerifyEnabled = true
-                                setTwoStepVerifyEnabled(lockPrefs, true)
-                            }
-                            showVoicePassphraseSetup = false
-                        }
-                    }
-                }
-
                 val favoriteApps = visibleApps
                     .filter { it.packageName in favoriteAppsPkgs }
                     .take(6)
@@ -1780,149 +1668,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         themeColor = themeColor,
                         onFinished = { showOnboarding = false }
                     )
-                    return@SciFiLauncherTheme
-                }
-
-                // Forcing Lock Task on top of the real Android keyguard fought with it and
-                // looped (pinning while the OS keyguard is also trying to show conflicts with
-                // it) - so this only forces lockdown during our lock screen when Kiosk mode is
-                // already the user's own setting, not unconditionally. FLAG_SECURE (blocking
-                // the Recents task-snapshot thumbnail) stays unconditional since that's just a
-                // window flag, not a mode change, and doesn't interact with the keyguard.
-                LaunchedEffect(launcherNeedsUnlock) {
-                    if (launcherNeedsUnlock) {
-                        if (kioskModeEnabled) {
-                            runCatching { startLockTask() }
-                        }
-                        window.setFlags(
-                            android.view.WindowManager.LayoutParams.FLAG_SECURE,
-                            android.view.WindowManager.LayoutParams.FLAG_SECURE
-                        )
-                    } else {
-                        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                        if (!kioskModeEnabled) {
-                            runCatching { stopLockTask() }
-                        }
-                    }
-                }
-
-                if (launcherNeedsUnlock) {
-                    LauncherLockGate(
-                        themeColor = themeColor,
-                        isDark = isDark,
-                        batteryMode = batteryMode,
-                        twoStepVerifyEnabled = isTwoStepVerifyEnabled(lockPrefs),
-                        onFingerprintTap = {
-                            val biometricManager = androidx.biometric.BiometricManager.from(this@MainActivity)
-                            val biometricAvailable = biometricManager.canAuthenticate(
-                                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
-                            ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
-
-                            if (biometricAvailable) {
-                                showBiometricPrompt(
-                                    onSuccess = { launcherNeedsUnlock = false },
-                                    onFailure = {
-                                        appLockPinFailCount = 0
-                                        showLauncherPinCheck = true
-                                    }
-                                )
-                            } else {
-                                appLockPinFailCount = 0
-                                showLauncherPinCheck = true
-                            }
-                        },
-                        onVoiceTap = {
-                            // Back to the simple version: just record and compare against the
-                            // enrolled voiceprint directly, no separate word-challenge/STT gate.
-                            // The challenge-based anti-replay version kept failing in practice
-                            // ("that didn't match" / "voice unrecognized") and every app behind
-                            // this is already independently lock-gated anyway, so the extra
-                            // friction wasn't worth it. Falls back to the old text-only
-                            // passphrase only if Short wasn't enrolled.
-                            if (VoiceIdManager.isStyleEnrolled(this@MainActivity, VoiceStyle.SHORT)) {
-                                scope.launch {
-                                    val sample = recordVoiceSample(
-                                        this@MainActivity,
-                                        VoiceStyle.SHORT.recordSeconds * VOICE_SAMPLE_RATE
-                                    )
-                                    val score = sample?.let {
-                                        VoiceIdManager.verify(this@MainActivity, it, VoiceStyle.SHORT)
-                                    }
-                                    if (score != null && score >= VoiceStyle.SHORT.threshold) {
-                                        launcherNeedsUnlock = false
-                                    } else {
-                                        speak("Voice unrecognized.")
-                                    }
-                                }
-                            } else {
-                                captureVoicePassphrase("Speak your passphrase") { spoken ->
-                                    val stored = loadVoicePassphrase(lockPrefs)
-                                    if (!spoken.isNullOrBlank() && !stored.isNullOrBlank() &&
-                                        spoken.trim().equals(stored.trim(), ignoreCase = true)
-                                    ) {
-                                        launcherNeedsUnlock = false
-                                    }
-                                    // No match/no speech: silently does nothing further - voice is
-                                    // a soft option here, not a gate that can lock anyone out.
-                                }
-                            }
-                        },
-                        onPasscodeTap = {
-                            appLockPinFailCount = 0
-                            showLauncherPinCheck = true
-                        }
-                    )
-
-                    if (showLauncherPinCheck) {
-                        PinCheckDialog(
-                            themeColor = themeColor,
-                            onDismiss = { showLauncherPinCheck = false },
-                            onSuccess = { enteredPin ->
-                                if (enteredPin == appPin) {
-                                    appLockPinFailCount = 0
-                                    showLauncherPinCheck = false
-                                    launcherNeedsUnlock = false
-                                } else {
-                                    appLockPinFailCount += 1
-                                    if (appLockPinFailCount >= 3) {
-                                        appLockPinFailCount = 0
-                                        showLauncherPinCheck = false
-                                        showAppLockRecovery = true
-                                    }
-                                }
-                            }
-                        )
-                    }
-
-                    if (showAppLockRecovery) {
-                        RecoveryCheckDialog(
-                            themeColor = themeColor,
-                            onDismiss = { showAppLockRecovery = false },
-                            onSuccess = { answer ->
-                                val storedRecovery = loadAppPinRecoveryAnswer(lockPrefs)
-                                val ok = storedRecovery != null &&
-                                    answer.trim().equals(storedRecovery.trim(), ignoreCase = true)
-                                if (ok) {
-                                    showAppLockRecovery = false
-                                    showAppLockNewPin = true
-                                }
-                            }
-                        )
-                    }
-
-                    if (showAppLockNewPin) {
-                        PinSetupDialog(
-                            title = "Set a new passcode",
-                            themeColor = themeColor,
-                            onDismiss = { showAppLockNewPin = false },
-                            onSave = { pin, favoriteAnimal ->
-                                appPin = pin
-                                saveAppPin(lockPrefs, pin, favoriteAnimal)
-                                showAppLockNewPin = false
-                                launcherNeedsUnlock = false
-                            }
-                        )
-                    }
                     return@SciFiLauncherTheme
                 }
 
@@ -1958,10 +1703,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 themeColor = themeColor,
                                 apps = visibleApps,
                                 isPageMode = isPageMode,
-                                lockedApps = loadLockedApps(lockPrefs),
                                 hiddenApps = hiddenApps,
-                                lockPrefs = lockPrefs,
-                                lockTimeoutMinutes = loadLockTimeoutMinutes(lockPrefs),
                                 fontSizeOption = fontSizeOption,
                                 isDark = isDark,
                                 batteryMode = batteryMode,
@@ -1972,7 +1714,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showRecents = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -1983,7 +1724,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showWelcome = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -2001,17 +1741,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                         }
                                     }
 
-                                    // Every app is gated now - requestAppUnlock itself is the
-                                    // only gate (it no-ops if no passcode has ever been set).
-                                    // The old isAppLockedRightNow/timeout-session concept relied
-                                    // on a "lock timeout" value that only the now-removed Locked
-                                    // Apps screen could ever set, which silently made every check
-                                    // return "not locked" for anyone who'd never visited it.
-                                    if (!appPin.isNullOrBlank()) {
-                                        requestAppUnlock(pkg) { doLaunch() }
-                                    } else {
-                                        doLaunch()
-                                    }
+                                    doLaunch()
                                 },
                                 onUninstall = { pkg ->
                                     val label = allAppsState.firstOrNull { it.packageName == pkg }?.label ?: pkg
@@ -2064,7 +1794,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showWelcome = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -2098,7 +1827,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showApps = false
                                     showRecents = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -2170,37 +1898,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             )
                         }
 
-                        showLockedApps -> {
-                            LockedAppsScreen(
-                                themeColor = themeColor,
-                                isDark = isDark,
-                                batteryMode = batteryMode,
-                                apps = visibleApps,
-                                lockPrefs = lockPrefs,
-                                lockedApps = lockedAppsSet,
-                                lockTimeoutMinutes = lockTimeoutMinutes,
-                                hideLockedNotifications = hideLockedNotifications,
-                                onHideLockedNotificationsChange = { newValue ->
-                                    saveHideLockedNotifications(lockPrefs, newValue)
-                                },
-                                onLockTimeoutChange = { minutes ->
-                                    saveLockTimeoutMinutes(lockPrefs, minutes)
-                                },
-                                onLockedAppsChange = { newSet ->
-                                    saveLockedApps(lockPrefs, newSet)
-
-                                    if (newSet.isEmpty()) {
-                                        saveHideLockedNotifications(lockPrefs, false)
-                                    }
-                                },
-                                onBack = {
-                                    showLockedApps = false
-                                    showSettings = false
-                                    showSecurity = false
-                                }
-                            )
-                        }
-
                         showFavoriteApps -> {
                             FavoriteAppsScreen(
                                 themeColor = themeColor,
@@ -2248,13 +1945,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 themeColor = themeColor,
                                 isDark = isDark,
                                 batteryMode = batteryMode,
-                                currentPin = appPin,
                                 lockPrefs = lockPrefs,
                                 onBackToDashboard = { showSecurity = false },
-                                onSetAppPin = { pin, recovery ->
-                                    appPin = pin
-                                    saveAppPin(lockPrefs, pin, recovery)
-                                },
                                 onOpenStorage = {
                                     showSecurity = false
                                     showStorage = true
@@ -2359,16 +2051,23 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onOpenLockScreenSettings = {
                                     runCatching { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) }
                                 },
-                                twoStepVerifyEnabled = twoStepVerifyEnabled,
-                                onToggleTwoStepVerify = { enable ->
-                                    if (enable && loadVoicePassphrase(lockPrefs).isNullOrBlank()) {
-                                        showVoicePassphraseSetup = true
-                                    } else {
-                                        twoStepVerifyEnabled = enable
-                                        setTwoStepVerifyEnabled(lockPrefs, enable)
-                                    }
+                                onArmSequenceMode = {
+                                    enterSequenceMode(this@MainActivity, lockPrefs)
+                                    speak("Sequence mode activated.")
                                 },
-                                onChangePassphrase = { showVoicePassphraseSetup = true }
+                                onExitSequenceMode = {
+                                    showBiometricPrompt(
+                                        title = "Exit Sequence Mode",
+                                        subtitle = "Verify it's really you",
+                                        onSuccess = {
+                                            exitSequenceMode(this@MainActivity, lockPrefs)
+                                            speak("Sequence mode cancelled. Welcome back.")
+                                        },
+                                        onFailure = {
+                                            speak("Negative. Biometric confirmation required to exit sequence mode.")
+                                        }
+                                    )
+                                }
                             )
                         }
 
@@ -2588,7 +2287,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showRecents = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -2599,7 +2297,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showWelcome = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
@@ -2610,175 +2307,37 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showRecents = false
                                     showSettings = false
                                     showSecurity = false
-                                    showLockedApps = false
                                     showHiddenApps = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
                                     isPageMode = false
                                     recentApps = emptyList()
-                                    appPin = null
                                     hiddenApps = emptySet()
                                     favoriteAppsPkgs = emptySet()
                                 },
                                 onOpenSettings = {
-                                    fun enterSettings() {
-                                        showSettings = true
-                                        showApps = false
-                                        showRecents = false
-                                        showWelcome = false
-                                        showSecurity = false
-                                        showLockedApps = false
-                                        showHiddenApps = false
-                                        showFavoriteApps = false
-                                        showBatteryAllowedApps = false
-                                    }
-                                    // Only gated once a PIN actually exists - otherwise first-time
-                                    // setup (which happens FROM inside Security) could never begin.
-                                    if (!appPin.isNullOrBlank()) {
-                                        showBiometricPrompt(
-                                            title = "Settings",
-                                            subtitle = "Verify it's really you",
-                                            onSuccess = { enterSettings() },
-                                            onFailure = {}
-                                        )
-                                    } else {
-                                        enterSettings()
-                                    }
+                                    showSettings = true
+                                    showApps = false
+                                    showRecents = false
+                                    showWelcome = false
+                                    showSecurity = false
+                                    showHiddenApps = false
+                                    showFavoriteApps = false
+                                    showBatteryAllowedApps = false
                                 },
                                 onOpenSecurity = {
-                                    fun enterSecurity() {
-                                        showSecurity = true
-                                        showApps = false
-                                        showRecents = false
-                                        showWelcome = false
-                                        showSettings = false
-                                        showLockedApps = false
-                                        showHiddenApps = false
-                                        showFavoriteApps = false
-                                        showBatteryAllowedApps = false
-                                    }
-                                    if (!appPin.isNullOrBlank()) {
-                                        showBiometricPrompt(
-                                            title = "Security",
-                                            subtitle = "Verify it's really you",
-                                            onSuccess = { enterSecurity() },
-                                            onFailure = {}
-                                        )
-                                    } else {
-                                        enterSecurity()
-                                    }
+                                    showSecurity = true
+                                    showApps = false
+                                    showRecents = false
+                                    showWelcome = false
+                                    showSettings = false
+                                    showHiddenApps = false
+                                    showFavoriteApps = false
+                                    showBatteryAllowedApps = false
                                 },
                                 favoriteApps = favoriteApps
                             )
                         }
-                    }
-
-                    // PIN CHECK DIALOG FOR LOCKED APPS (fallback behind biometric)
-                    if (askForPinForLaunch && pendingLaunchPkg != null) {
-                        PinCheckDialog(
-                            themeColor = themeColor,
-                            onDismiss = {
-                                askForPinForLaunch = false
-                                pendingLaunchPkg = null
-                                pendingUnlockCallback = null
-                            },
-                            onSuccess = { enteredPin ->
-                                if (enteredPin == appPin) {
-                                    // CORRECT PIN → run whatever the original caller actually
-                                    // asked for (or, if Sequence Mode is active, require a
-                                    // fingerprint first to actually stand it down).
-                                    val pkg = pendingLaunchPkg
-                                    val callback = pendingUnlockCallback
-                                    askForPinForLaunch = false
-                                    pendingLaunchPkg = null
-                                    pendingUnlockCallback = null
-                                    appLockPinFailCount = 0
-
-                                    fun launchPending() {
-                                        if (callback != null) {
-                                            callback()
-                                        } else if (pkg != null) {
-                                            // Defensive fallback only - every real caller now
-                                            // supplies a callback via pendingUnlockCallback.
-                                            val launchIntent = packageManager.getLaunchIntentForPackage(pkg)
-                                            if (launchIntent != null) {
-                                                startActivity(launchIntent)
-                                                recordLastOpened(lastOpenedPrefs, pkg)
-                                            }
-                                        }
-                                    }
-
-                                    if (isSequenceModeActive(lockPrefs)) {
-                                        showBiometricPrompt(
-                                            onSuccess = {
-                                                exitSequenceMode(this@MainActivity, lockPrefs)
-                                                speak("Sequence mode cancelled. Welcome back.")
-                                                launchPending()
-                                            },
-                                            onFailure = {
-                                                speak("Negative. Biometric confirmation required to exit sequence mode.")
-                                            }
-                                        )
-                                    } else {
-                                        launchPending()
-                                    }
-                                } else {
-                                    val pkg = pendingLaunchPkg
-                                    if (pkg != null) {
-                                        recordIntruderClick(pkg)
-                                        captureIntruderPhotoFor(pkg)
-                                    }
-                                    appLockPinFailCount += 1
-                                    if (appLockPinFailCount >= 3) {
-                                        appLockPinFailCount = 0
-                                        askForPinForLaunch = false
-                                        showAppLockRecovery = true
-                                    }
-                                    triggerIntrusionCheck(scope, lockPrefs)
-                                }
-                            }
-                        )
-                    }
-
-                    // Passcode failed 3 times in a row -> offer the recovery question instead
-                    // of just locking the user out with no path forward.
-                    if (showAppLockRecovery) {
-                        RecoveryCheckDialog(
-                            themeColor = themeColor,
-                            onDismiss = {
-                                showAppLockRecovery = false
-                                pendingLaunchPkg = null
-                                pendingUnlockCallback = null
-                            },
-                            onSuccess = { answer ->
-                                val storedRecovery = loadAppPinRecoveryAnswer(lockPrefs)
-                                val ok = storedRecovery != null &&
-                                    answer.trim().equals(storedRecovery.trim(), ignoreCase = true)
-                                if (ok) {
-                                    showAppLockRecovery = false
-                                    showAppLockNewPin = true
-                                }
-                            }
-                        )
-                    }
-
-                    if (showAppLockNewPin) {
-                        PinSetupDialog(
-                            title = "Set a new passcode",
-                            themeColor = themeColor,
-                            onDismiss = {
-                                showAppLockNewPin = false
-                                pendingLaunchPkg = null
-                                pendingUnlockCallback = null
-                            },
-                            onSave = { pin, favoriteAnimal ->
-                                appPin = pin
-                                saveAppPin(lockPrefs, pin, favoriteAnimal)
-                                showAppLockNewPin = false
-                                pendingLaunchPkg = null
-                                pendingUnlockCallback = null
-                            }
-                        )
                     }
 
                     // DEVICE ACTION CONFIRMATION - never auto-approves. 90s of no response
@@ -2934,18 +2493,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     NotificationBarTab(
                         themeColor = themeColor,
                         unreadCount = notificationFeed.size,
-                        onClick = {
-                            if (!appPin.isNullOrBlank()) {
-                                showBiometricPrompt(
-                                    title = "Notifications",
-                                    subtitle = "Verify it's really you",
-                                    onSuccess = { showNotificationPanel = true },
-                                    onFailure = {}
-                                )
-                            } else {
-                                showNotificationPanel = true
-                            }
-                        },
+                        onClick = { showNotificationPanel = true },
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .systemBarsPadding()
@@ -3028,7 +2576,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onToggleLocation = { locationOnState = toggleLocation() },
                                 onOpenLaptopLink = {
                                     showQuickSettingsPanel = false
-                                    requestAppUnlock("laptop_control") { showLaptopControl = true }
+                                    showLaptopControl = true
                                 },
                                 onToggleScreenRecord = {
                                     if (screenRecordingState) {
@@ -3111,23 +2659,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         }
     }
 
-    override fun onStop() {
-        super.onStop()
-        // A trusted round-trip sub-activity (biometric prompt, QR scanner) also triggers
-        // onStop() while it's in front - that's not the user actually leaving, so it must
-        // not re-lock the launcher out from under whatever screen was already unlocked and
-        // waiting for that sub-activity's result (this was the "scanning the QR just bounces
-        // me back to the lock screen" bug).
-        if (suppressNextLock) {
-            suppressNextLock = false
-            return
-        }
-        val pin = getSharedPreferences("lock_prefs", MODE_PRIVATE).getString("app_pin", null)
-        if (!pin.isNullOrBlank()) {
-            launcherNeedsUnlock = true
-        }
-    }
-
     private fun loadAllApps(pm: PackageManager): List<AppItem> {
         val labelPrefs = getSharedPreferences("app_label_prefs", MODE_PRIVATE)
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
@@ -3205,7 +2736,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         onFailure: () -> Unit
     ) {
         pendingBiometricCallback = onSuccess to onFailure
-        suppressNextLock = true
         runCatching {
             biometricAuthLauncher.launch(
                 Intent(this, BiometricAuthActivity::class.java).apply {
@@ -3214,7 +2744,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 }
             )
         }.onFailure {
-            suppressNextLock = false
             pendingBiometricCallback = null
             onFailure()
         }
@@ -3224,89 +2753,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
      * Wrong PIN was entered. Warns the user, requests a fingerprint, and starts a 5-minute
      * timer - if biometrics aren't confirmed in that window, Sequence Mode activates.
      */
-    private fun triggerIntrusionCheck(scope: kotlinx.coroutines.CoroutineScope, lockPrefs: SharedPreferences) {
-        speak("Unauthorized access attempt detected. Confirm your identity.")
-
-        pendingSequenceModeTimeout?.cancel()
-        pendingSequenceModeTimeout = scope.launch {
-            kotlinx.coroutines.delay(5 * 60 * 1000L)
-            if (!isSequenceModeActive(lockPrefs)) {
-                enterSequenceMode(this@MainActivity, lockPrefs)
-                speak("No confirmation received. Sequence mode activated.")
-            }
-        }
-
-        showBiometricPrompt(
-            onSuccess = {
-                pendingSequenceModeTimeout?.cancel()
-                speak("Identity confirmed.")
-            },
-            onFailure = {
-                // Timeout keeps running in the background; the user can retry the PIN
-                // to bring the biometric prompt back up before it elapses.
-            }
-        )
-    }
-
-    private fun recordIntruderClick(pkg: String) {
-        val pm = packageManager
-        val appInfo = pm.getApplicationInfo(pkg, 0)
-        val appName = pm.getApplicationLabel(appInfo).toString()
-
-        val now = System.currentTimeMillis()
-
-        val index = intruderLogs.indexOfFirst { it.packageName == pkg }
-        if (index >= 0) {
-            val old = intruderLogs[index]
-            intruderLogs[index] = old.copy(
-                count = old.count + 1,
-                lastTime = now,
-                allTimes = old.allTimes + now
-            )
-        } else {
-            intruderLogs.add(
-                IntruderLog(
-                    packageName = pkg,
-                    appName = appName,
-                    count = 1,
-                    lastTime = now,
-                    allTimes = listOf(now)
-                )
-            )
-        }
-    }
-
-    private fun captureIntruderPhotoFor(pkg: String) {
-        try {
-            val dir = File(filesDir, "intruders")
-            if (!dir.exists()) dir.mkdirs()
-
-            val fileName = "intruder_${System.currentTimeMillis()}_${pkg.substringAfterLast('.')}.jpg"
-            val photoFile = File(dir, fileName)
-
-            val photoUri = FileProvider.getUriForFile(
-                this,
-                "${packageName}.fileprovider",
-                photoFile
-            )
-
-            val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
-                putExtra(MediaStore.EXTRA_OUTPUT, photoUri)
-                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            }
-
-            // Make sure there is a camera app
-            val resolved = cameraIntent.resolveActivity(packageManager)
-            if (resolved != null) {
-                startActivity(cameraIntent)
-            } else {
-                // no camera app, do nothing
-            }
-        } catch (e: Exception) {
-            // ignore for now
-        }
-    }
-
     private fun launchApp(
         pkg: String,
         apps: List<AppItem>,

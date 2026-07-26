@@ -19,7 +19,8 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 // Sequence Mode: anti-theft lockdown + family/email alerts + delayed wipe.
-// All state lives in the same "lock_prefs" SharedPreferences used by LockPrefs.kt.
+// All state lives in the shared "lock_prefs" SharedPreferences file (also used for a handful
+// of unrelated settings elsewhere - kiosk mode, install-watch, location history, etc.).
 
 const val KEY_SEQUENCE_MODE_ACTIVE = "sequence_mode_active"
 private const val KEY_SEQUENCE_MODE_STARTED_AT = "sequence_mode_started_at"

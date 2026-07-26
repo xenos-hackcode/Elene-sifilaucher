@@ -122,80 +122,6 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
         bubbleHandler.removeCallbacks(visibilityRunnable)
         bubbleHandler.postDelayed(visibilityRunnable, 450L)
-
-        enforceAppLockOnForeground(pkg)
-    }
-
-    /** Tapping a locked app's launcher icon was the only thing that ever asked for a PIN/
-     * fingerprint - resuming the exact same app from Android's own Recents/task-switcher
-     * brings its existing task to front directly, with no involvement from this launcher at
-     * all, so it silently skipped the lock entirely. This is the same foreground-change signal
-     * already used for the bubble's visibility above, just also used to catch that gap -
-     * whatever package just came to front, locked or not, however it got there. */
-    private fun enforceAppLockOnForeground(pkg: String) {
-        if (pkg == packageName) {
-            // Actually back at our own launcher - a real exit, not just a Recents glance. Next
-            // entry into any app (even the one just used) should re-prompt, matching how a
-            // launcher-icon tap always does.
-            AppLockCoordinator.clearActive()
-            removeInstantLockCover()
-            return
-        }
-        if (pkg == "com.android.systemui") return
-        if (!isAppLockConfigured()) return
-        if (AppLockCoordinator.isActive(pkg)) return
-
-        val label = runCatching {
-            AppResolver.findInstalledApps(this).firstOrNull { it.packageName == pkg }?.label
-        }.getOrNull()
-        if (label == null) {
-            // Unresolvable to a real installed app - almost certainly Recents/Overview itself or
-            // some other system-internal window, not a real app landing in foreground. Leave
-            // AppLockCoordinator's active package untouched so returning to whatever app was
-            // already active (glancing at Recents and backing out of it) doesn't look like a
-            // fresh entry.
-            return
-        }
-
-        if (AppLockCoordinator.isWithinGrace()) {
-            // The app that was just unlocked settling into the foreground after its own
-            // relaunch - adopt it as the active app rather than re-gating it a second time.
-            AppLockCoordinator.markActive(pkg)
-            removeInstantLockCover()
-            return
-        }
-
-        // Covers the screen immediately, before goHome()/the relaunch even start - narrows (but,
-        // being honest, can't fully eliminate on a non-rooted device with no window-level
-        // interception rights) the window where a locked app's content is visible before the
-        // prompt appears.
-        showInstantLockCover()
-        goHome()
-        bringHomeWithCommand("open_app:$label")
-    }
-
-    private var lockCoverView: View? = null
-
-    private fun showInstantLockCover() {
-        if (lockCoverView != null) return
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val view = View(this).apply { setBackgroundColor(Color.BLACK) }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            0,
-            PixelFormat.OPAQUE
-        )
-        runCatching { wm.addView(view, params) }.onSuccess { lockCoverView = view }
-        // Safety fallback - never leave the screen covered if something goes wrong downstream.
-        bubbleHandler.postDelayed({ removeInstantLockCover() }, 5000L)
-    }
-
-    private fun removeInstantLockCover() {
-        val view = lockCoverView ?: return
-        lockCoverView = null
-        runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view) }
     }
 
     private fun currentThemeColorArgb(): Int {
@@ -355,9 +281,6 @@ class ScifiAccessibilityService : AccessibilityService() {
         })
         runCatching { recognizer.startListening(recIntent) }
     }
-
-    private fun isAppLockConfigured(): Boolean =
-        APP_LOCK_ENFORCED && !loadAppPin(getSharedPreferences("lock_prefs", MODE_PRIVATE)).isNullOrBlank()
 
     private fun continuousListeningEnabled(): Boolean =
         getSharedPreferences("theme_prefs", MODE_PRIVATE).getBoolean("elene_continuous_listening", true)
@@ -597,17 +520,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         android.util.Log.d("EleneBubble", "Command verb=\"$verb\" arg=\"$arg\"")
         val handled = when (verb) {
             "stop_listening" -> { stopListening(); true }
-            // A PIN is configured -> bridge to the launcher so it goes through the same
-            // requestAppUnlock/biometric/PIN flow tapping a locked app icon does. This was
-            // missing entirely right after the bubble consolidation - opening a locked app by
-            // voice silently bypassed the lock altogether, since openAppByLabel just launches
-            // directly with no notion of app-lock at all. No PIN configured -> nothing to gate,
-            // open directly for speed.
-            "open_app" -> arg != null && if (isAppLockConfigured()) {
-                bringHomeWithCommand("open_app:$arg")
-            } else {
-                openAppByLabel(arg)
-            }
+            "open_app" -> arg != null && openAppByLabel(arg)
             "search_app" -> arg != null && bringHomeWithSearch(arg)
             "open_page" -> arg != null && bringHomeWithCommand("open_page:$arg")
             "freeze_app" -> arg != null && bringHomeWithCommand("freeze_app:$arg")

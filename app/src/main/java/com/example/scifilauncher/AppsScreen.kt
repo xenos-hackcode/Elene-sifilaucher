@@ -2,7 +2,6 @@
 
 package com.example.scifilauncher
 
-import android.content.SharedPreferences
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -47,10 +46,7 @@ fun AppsScreen(
     themeColor: Color,
     apps: List<AppItem>,
     isPageMode: Boolean,
-    lockedApps: Set<String>,
     hiddenApps: Set<String>,
-    lockPrefs: SharedPreferences,
-    lockTimeoutMinutes: Int?, // not used in lock check now, but kept if you need it elsewhere
     fontSizeOption: FontSizeOption,
     isDark: Boolean,
     batteryMode: BatterySaverMode,
@@ -193,18 +189,11 @@ fun AppsScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             items(pageApps, key = { it.packageName }) { app ->
-                                val isLockedNow = isAppLockedRightNow(
-                                    prefs = lockPrefs,
-                                    packageName = app.packageName,
-                                    lockedApps = lockedApps
-                                )
-
                                 AppTile(
                                     app = app,
                                     labelColor = labelColor,
                                     labelFontFamily = labelFontFamily,
                                     fontSizeOption = fontSizeOption,
-                                    isLocked = isLockedNow,
                                     onTap = { onAppClick(app.packageName) },
                                     onLongPress = {
                                         selectedApp = app
@@ -222,18 +211,11 @@ fun AppsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(filteredApps, key = { it.packageName }) { app ->
-                            val isLockedNow = isAppLockedRightNow(
-                                prefs = lockPrefs,
-                                packageName = app.packageName,
-                                lockedApps = lockedApps
-                            )
-
                             AppTile(
                                 app = app,
                                 labelColor = labelColor,
                                 labelFontFamily = labelFontFamily,
                                 fontSizeOption = fontSizeOption,
-                                isLocked = isLockedNow,
                                 onTap = { onAppClick(app.packageName) },
                                 onLongPress = {
                                     selectedApp = app
@@ -457,7 +439,6 @@ fun AppTile(
     labelColor: Color,
     labelFontFamily: FontFamily,
     fontSizeOption: FontSizeOption,
-    isLocked: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit
 ) {
@@ -488,7 +469,7 @@ fun AppTile(
         }
 
         Text(
-            text = if (isLocked) "🔒 ${app.label}" else app.label,
+            text = app.label,
             color = labelColor,
             fontSize = 10.sp * fontSizeOption.scale,
             fontFamily = labelFontFamily,

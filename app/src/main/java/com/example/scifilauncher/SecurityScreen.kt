@@ -28,10 +28,8 @@ fun SecurityScreen(
     themeColor: Color,
     isDark: Boolean,
     batteryMode: BatterySaverMode,
-    currentPin: String?,                    // current app PIN (if any)
     lockPrefs: SharedPreferences,
     onBackToDashboard: () -> Unit,
-    onSetAppPin: (String, String) -> Unit, // pin + recovery answer
     onOpenHiddenApps: () -> Unit,
     onOpenStorage: () -> Unit,
     onOpenFileManager: () -> Unit,
@@ -62,17 +60,12 @@ fun SecurityScreen(
     kioskModeEnabled: Boolean,
     onToggleKioskMode: (Boolean) -> Unit,
     onOpenLockScreenSettings: () -> Unit,
-    twoStepVerifyEnabled: Boolean,
-    onToggleTwoStepVerify: (Boolean) -> Unit,
-    onChangePassphrase: () -> Unit
+    onArmSequenceMode: () -> Unit,
+    onExitSequenceMode: () -> Unit
 ) {
-    var showAppPinDialog by remember { mutableStateOf(false) }
-    var showTwoStepInfo by remember { mutableStateOf(false) }
     var showListeningInfoDialog by remember { mutableStateOf(showListeningInfo) }
 
-    var showResetDialog by remember { mutableStateOf(false) }
-    var showRecoveryDialog by remember { mutableStateOf(false) }
-
+    var showManualArmInfo by remember { mutableStateOf(false) }
     var showCedalSharedSystemInfo by remember { mutableStateOf(false) }
     var showLockdownInfo by remember { mutableStateOf(false) }
     var showLocationHistoryInfo by remember { mutableStateOf(false) }
@@ -115,42 +108,9 @@ fun SecurityScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            PanelSection(title = "ACCESS LOCKS", themeColor = themeColor) {
-                Text(
-                    text = "Every app is locked behind fingerprint/face recognition by " +
-                            "default. This passcode is only the fallback if biometrics fail.",
-                    color = Color.Gray,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-                PanelRow(
-                    label = "Fallback passcode",
-                    themeColor = themeColor,
-                    value = if (currentPin == null) "Not set" else "Set"
-                ) {
-                    if (currentPin == null) showAppPinDialog = true else showResetDialog = true
-                }
-                PanelToggleRow(
-                    label = "2-Step Verify",
-                    themeColor = themeColor,
-                    checked = twoStepVerifyEnabled,
-                    onToggle = { onToggleTwoStepVerify(it) },
-                    onInfoClick = { showTwoStepInfo = true }
-                )
-                if (twoStepVerifyEnabled) {
-                    PanelRow(
-                        label = "Change passphrase",
-                        themeColor = themeColor,
-                        showDivider = false,
-                        onClick = onChangePassphrase
-                    )
-                }
-                PanelRow(label = "Freezer", themeColor = themeColor, onClick = onOpenFreezer)
-                PanelRow(label = "Hidden apps", themeColor = themeColor, showDivider = false, onClick = onOpenHiddenApps)
-            }
-
             PanelSection(title = "DATA & MEDIA", themeColor = themeColor) {
+                PanelRow(label = "Freezer", themeColor = themeColor, onClick = onOpenFreezer)
+                PanelRow(label = "Hidden apps", themeColor = themeColor, onClick = onOpenHiddenApps)
                 PanelRow(label = "Intruder attempts", themeColor = themeColor, onClick = onOpenStorage)
                 PanelRow(label = "File manager", themeColor = themeColor, onClick = onOpenFileManager)
                 PanelRow(label = "Commands", themeColor = themeColor, showDivider = false, onClick = onOpenCommands)
@@ -184,6 +144,20 @@ fun SecurityScreen(
                     valueColor = if (isSequenceModeActive(lockPrefs)) Color.Red else themeColor,
                     themeColor = themeColor
                 )
+                if (isSequenceModeActive(lockPrefs)) {
+                    PanelRow(
+                        label = "Exit Sequence Mode",
+                        themeColor = themeColor,
+                        onClick = onExitSequenceMode
+                    )
+                } else {
+                    PanelRow(
+                        label = "Trigger lockdown now",
+                        themeColor = themeColor,
+                        onInfoClick = { showManualArmInfo = true },
+                        onClick = onArmSequenceMode
+                    )
+                }
                 val lastLocation = loadLastKnownLocation(lockPrefs) ?: currentDeviceLocation
                 PanelStaticInfoRow(
                     label = "Last known location",
@@ -473,21 +447,6 @@ fun SecurityScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // Fallback passcode flow (first time OR after reset success). Once set, every app
-        // is automatically locked behind biometrics with this as the fallback - no separate
-        // "pick which apps" step needed anymore.
-        if (showAppPinDialog) {
-            PinSetupDialog(
-                title = "Set fallback passcode",
-                themeColor = themeColor,
-                onDismiss = { showAppPinDialog = false },
-                onSave = { pin, favoriteAnimal ->
-                    onSetAppPin(pin, favoriteAnimal)
-                    showAppPinDialog = false
-                }
-            )
-        }
-
         if (showListeningInfoDialog) {
             AlertDialog(
                 onDismissRequest = {
@@ -533,13 +492,13 @@ fun SecurityScreen(
             )
         }
 
-        // RESET APP PIN CONFIRMATION
-        if (showResetDialog) {
+        // MANUAL SEQUENCE MODE ARM disclosure
+        if (showManualArmInfo) {
             AlertDialog(
-                onDismissRequest = { showResetDialog = false },
+                onDismissRequest = { showManualArmInfo = false },
                 title = {
                     Text(
-                        text = "Reset App PIN?",
+                        text = "Trigger lockdown now",
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -547,58 +506,18 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Resetting will remove your current PIN and unlock all locked apps. Continue?",
+                        text = "Immediately arms Sequence Mode: locks the phone right now (if " +
+                                "OS-level lockdown is enabled) and starts the recovery countdown " +
+                                "toward full-device wipe if that's turned on. Use this if the " +
+                                "phone is lost or stolen. Exiting afterward requires a " +
+                                "fingerprint.",
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        showResetDialog = false
-                        showRecoveryDialog = true
-                    }) {
-                        Text("YES", color = themeColor, fontFamily = FontFamily.Monospace)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showResetDialog = false }) {
-                        Text("NO", color = themeColor.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace)
-                    }
-                }
-            )
-        }
-
-        // 2-STEP VERIFY disclosure
-        if (showTwoStepInfo) {
-            AlertDialog(
-                onDismissRequest = { showTwoStepInfo = false },
-                title = {
-                    Text(
-                        text = "2-Step Verify",
-                        color = themeColor,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 16.sp
-                    )
-                },
-                text = {
-                    Text(
-                        text = "Adds a spoken passphrase as an extra way to unlock, alongside " +
-                                "fingerprint. It's matched by converting your speech to text, " +
-                                "not real voiceprint verification - so treat it as a " +
-                                "convenience, not the same strength as fingerprint or your " +
-                                "passcode. Getting it wrong never locks you out; it just does " +
-                                "nothing and lets you try fingerprint or passcode instead. " +
-                                "Passcode always stays available as the guaranteed fallback. " +
-                                "Turning this on for the first time will ask you to record your " +
-                                "passphrase.",
-                        color = if (isDark) Color.White else Color.Black,
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = { showTwoStepInfo = false }) {
+                    TextButton(onClick = { showManualArmInfo = false }) {
                         Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
@@ -805,206 +724,7 @@ fun SecurityScreen(
             )
         }
 
-        // RECOVERY (favorite animal) for app PIN
-        if (showRecoveryDialog) {
-            RecoveryCheckDialog(
-                themeColor = themeColor,
-                onDismiss = { showRecoveryDialog = false },
-                onSuccess = { answer ->
-                    val storedRecovery = loadAppPinRecoveryAnswer(lockPrefs)
-                    val ok = storedRecovery != null &&
-                            answer.trim().equals(storedRecovery.trim(), ignoreCase = true)
-
-                    if (ok) {
-                        clearAppPin(lockPrefs)
-                        clearAllLocksAndUnlocks(lockPrefs)
-                        showRecoveryDialog = false
-                        showAppPinDialog = true
-                    } else {
-                        // error handled inside dialog
-                    }
-                }
-            )
-        }
         }
     }
 }
-
-@Composable
-fun PinSetupDialog(
-    title: String,
-    themeColor: Color,
-    onDismiss: () -> Unit,
-    onSave: (pin: String, favoriteAnimal: String) -> Unit
-) {
-    var pin by remember { mutableStateOf("") }
-    var confirmPin by remember { mutableStateOf("") }
-    var favoriteAnimal by remember { mutableStateOf("") }
-    var errorText by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = { onDismiss() },
-        title = {
-            Text(
-                text = title,
-                color = themeColor,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 16.sp
-            )
-        },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = {
-                        if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
-                            pin = it
-                        }
-                    },
-                    label = { Text("Enter PIN") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = confirmPin,
-                    onValueChange = {
-                        if (it.length <= 6 && it.all { ch -> ch.isDigit() }) {
-                            confirmPin = it
-                        }
-                    },
-                    label = { Text("Confirm PIN") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = favoriteAnimal,
-                    onValueChange = { favoriteAnimal = it },
-                    label = { Text("What is your favorite animal?") },
-                    singleLine = true
-                )
-
-                if (errorText != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = errorText ?: "",
-                        color = Color.Red,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    when {
-                        pin.length < 4 -> {
-                            errorText = "PIN must be at least 4 digits"
-                        }
-                        pin != confirmPin -> {
-                            errorText = "PINs do not match"
-                        }
-                        favoriteAnimal.isBlank() -> {
-                            errorText = "Please answer the recovery question"
-                        }
-                        else -> {
-                            errorText = null
-                            onSave(pin, favoriteAnimal.trim())
-                        }
-                    }
-                }
-            ) {
-                Text(
-                    text = "SAVE",
-                    color = themeColor,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { onDismiss() }) {
-                Text(
-                    text = "CANCEL",
-                    color = themeColor.copy(alpha = 0.7f),
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-    )
-}
-
-@Composable
-fun RecoveryCheckDialog(
-    themeColor: Color,
-    isDark: Boolean = true,
-    onDismiss: () -> Unit,
-    onSuccess: (String) -> Unit
-) {
-    var answer by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = { onDismiss() },
-        title = {
-            Text(
-                text = "Recovery question",
-                color = themeColor,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 16.sp
-            )
-        },
-        text = {
-            Column {
-                Text(
-                    text = "What is your favorite animal?",
-                    color = if (isDark) Color.White else Color.Black,
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = answer,
-                    onValueChange = { answer = it },
-                    label = { Text("Answer") },
-                    singleLine = true
-                )
-                if (error != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = error!!,
-                        color = Color.Red,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                if (answer.isBlank()) {
-                    error = "Please enter your answer"
-                } else {
-                    error = null
-                    onSuccess(answer)
-                }
-            }) {
-                Text("VERIFY", color = themeColor, fontFamily = FontFamily.Monospace)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { onDismiss() }) {
-                Text("CANCEL", color = themeColor.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace)
-            }
-        }
-    )
-}
-
 
