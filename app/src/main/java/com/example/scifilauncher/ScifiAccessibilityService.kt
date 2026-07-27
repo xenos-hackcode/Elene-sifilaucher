@@ -146,6 +146,7 @@ class ScifiAccessibilityService : AccessibilityService() {
             val callerName = intent?.getStringExtra("callerName")
             val appName = intent?.getStringExtra("appName")
             wakeScreenBriefly(this@ScifiAccessibilityService)
+            pendingForceListenForCall = true
             announceIncomingCall(
                 if (!callerName.isNullOrBlank()) "Incoming call from $callerName." else "Incoming call${if (!appName.isNullOrBlank()) " on $appName" else ""}."
             )
@@ -175,6 +176,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         if (incomingNumber != null && incomingNumber == lastAnnouncedRingingNumber) return
         lastAnnouncedRingingNumber = incomingNumber
         wakeScreenBriefly(this)
+        pendingForceListenForCall = true
         val name = incomingNumber?.let { runCatching { reverseLookupContactName(this, it) }.getOrNull() }
         announceIncomingCall(
             when {
@@ -587,6 +589,17 @@ class ScifiAccessibilityService : AccessibilityService() {
     // without needing to thread a new completion callback through the whole TTS plumbing.
     private var pendingVoiceMemoStart = false
 
+    // Confirmed real bug the user hit live: with continuous listening off (or after an earlier
+    // "stop listening"), the incoming-call announcement finished speaking and then just went
+    // dormant - there was no listening window at all for "pick it up" to ever be heard, making
+    // the whole point of call awareness (hands-free answer) unusable outside an active
+    // conversation. A ringing call is time-critical (it stops ringing / goes to voicemail
+    // within seconds) and was explicitly asked to be answerable this way, so this one-shot flag
+    // forces exactly one real listening window after the announcement, bypassing BOTH
+    // listeningStopped and the continuous-listening setting - startListening()'s own safety
+    // checks (keyguard, an already-answered call) still apply underneath it regardless.
+    private var pendingForceListenForCall = false
+
     private fun retryListeningSoon(delayMillis: Long = 900L) {
         if (pendingVoiceMemoStart) {
             pendingVoiceMemoStart = false
@@ -600,6 +613,11 @@ class ScifiAccessibilityService : AccessibilityService() {
         if (mediaFocusHandle != null) {
             releaseAudioFocus(this, mediaFocusHandle)
             mediaFocusHandle = null
+        }
+        if (pendingForceListenForCall) {
+            pendingForceListenForCall = false
+            bubbleHandler.postDelayed({ startListening() }, delayMillis)
+            return
         }
         if (listeningStopped) {
             // A stale callback from an utterance that started before an explicit stop already
