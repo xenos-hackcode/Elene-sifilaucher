@@ -509,6 +509,15 @@ class ScifiAccessibilityService : AccessibilityService() {
             setBubbleState(EleneBubbleState.DORMANT)
             return
         }
+        // Real bug found live: the MediaProjection consent dialog (and this OEM's audible
+        // "screen sharing started" confirmation once granted) was getting picked up by a mic
+        // that reopened during that window and misread as a command. See
+        // haltListeningForCapture() - held closed for the whole describe_screen/play_game
+        // bootstrap, not just the instant it's triggered.
+        if (awaitingCaptureConsent) {
+            setBubbleState(EleneBubbleState.DORMANT)
+            return
+        }
         // Media playing used to also go straight to dormant (the same "don't misread the movie
         // dialogue as a command" concern as a call) - but that meant Elene simply couldn't be
         // used at all while music/video was playing. Taking real AUDIOFOCUS_GAIN instead
@@ -1026,6 +1035,11 @@ class ScifiAccessibilityService : AccessibilityService() {
     private var awaitingCaptureRelaunch = false
     private var pendingFrameRequestId: String? = null
 
+    // True from the moment describe_screen/play_game is triggered until the first real frame
+    // (or a failure) comes back - see haltListeningForCapture() for why this whole window,
+    // not just the instant of triggering it, needs the mic held closed.
+    private var awaitingCaptureConsent = false
+
     private var gameLoopActive = false
     private var gameLoopTargetPkg: String? = null
     private var gameLoopHint: String? = null
@@ -1043,11 +1057,31 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Confirmed real gap (found from live on-device use, not assumed): the MediaProjection
+     * consent flow - the system permission dialog, and on this OEM build an audible "screen
+     * sharing started" confirmation once granted - happens while Elene's own continuous
+     * listening could still be open (the turn that said "play this" naturally loops back into
+     * listening once command dispatch finishes, well before the user has even seen the consent
+     * dialog). That system audio was getting picked up by the still-open mic and misread as a
+     * command, sending Elene briefly haywire until she recovered. Same class of bug as the
+     * incoming-call/mic collision already fixed once - closed the same way: stop the mic and
+     * hold it closed for the whole bootstrap window, not just the instant of triggering it. */
+    private fun haltListeningForCapture() {
+        awaitingCaptureConsent = true
+        if (speechRecognizer != null) {
+            runCatching { speechRecognizer?.destroy() }
+            speechRecognizer = null
+        }
+        setBubbleState(EleneBubbleState.DORMANT)
+    }
+
     fun startDescribeScreen(question: String?) {
+        haltListeningForCapture()
         pendingCaptureTargetPkg = lastForegroundPkg
         pendingCaptureQuestion = question
         pendingCaptureIsSingle = true
         if (!bringHomeWithCommand("describe_screen_capture")) {
+            awaitingCaptureConsent = false
             speakOut("Couldn't start the screen permission prompt.")
         }
     }
@@ -1058,11 +1092,13 @@ class ScifiAccessibilityService : AccessibilityService() {
             speakOut("Open the game first, then ask me to play.")
             return
         }
+        haltListeningForCapture()
         pendingCaptureTargetPkg = target
         pendingCaptureQuestion = null
         pendingCaptureIsSingle = false
         gameLoopHint = hint
         if (!bringHomeWithCommand("play_game_capture")) {
+            awaitingCaptureConsent = false
             speakOut("Couldn't start the screen permission prompt.")
         }
     }
@@ -1094,6 +1130,7 @@ class ScifiAccessibilityService : AccessibilityService() {
      * prompt, or the launch attempt itself failed. */
     fun onPerceptionCaptureDenied() {
         val wasGameLoop = !pendingCaptureIsSingle
+        awaitingCaptureConsent = false
         resetCaptureState()
         speakOut(
             if (wasGameLoop) "I need the screen-sharing permission to play games for you."
@@ -1122,6 +1159,11 @@ class ScifiAccessibilityService : AccessibilityService() {
             onCaptureFailed("Couldn't read the screen.")
             return
         }
+
+        // The bootstrap window (consent + relaunch) is over now that a real frame came back -
+        // safe to let the mic reopen again from here on (still held closed if capture itself
+        // fails below, via onCaptureFailed).
+        awaitingCaptureConsent = false
 
         if (pendingCaptureIsSingle) {
             val question = pendingCaptureQuestion
@@ -1226,6 +1268,7 @@ class ScifiAccessibilityService : AccessibilityService() {
 
     private fun onCaptureFailed(message: String) {
         pendingFrameRequestId = null
+        awaitingCaptureConsent = false
         if (gameLoopActive) {
             stopGameLoop(message)
         } else {
@@ -1398,9 +1441,23 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Confirmed real bug (found live, not assumed): "click <contact name>" in an app like
+     * WhatsApp was landing on that contact's avatar instead of their chat row - the avatar
+     * often carries the exact same accessible name as the row's own text label (both read
+     * "John Doe"), and the avatar frequently comes first in the accessibility tree's match
+     * order, so the old firstOrNull() picked it. Tapping an avatar's own target (opens the
+     * profile picture/contact info) is a different action from tapping the row. Prefer an
+     * actual text-bearing match (TextView/EditText) over an image/icon one when both match the
+     * same query, falling back to the first match only if nothing text-like matched at all -
+     * a genuinely icon-only button with a matching content-description still needs to work. */
     private fun findNodeByText(query: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
-        return root.findAccessibilityNodeInfosByText(query)?.firstOrNull()
+        val matches = root.findAccessibilityNodeInfosByText(query) ?: return null
+        val textLike = matches.firstOrNull { node ->
+            val cls = node.className?.toString().orEmpty()
+            cls.contains("TextView") || cls.contains("EditText")
+        }
+        return textLike ?: matches.firstOrNull()
     }
 
     // ---- Play Store search assist (for the voice "download X" flow) ----

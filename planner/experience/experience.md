@@ -132,6 +132,24 @@
   my screen" / "play this game" to the phone), same as every other voice-triggered feature in
   this project - not something to mark done from a clean build alone.
 
+- (2026-07-27) Two real bugs found via the user's own live testing of screen perception (not
+  guessed): (1) telling Elene "play this game" while already in it opened the MediaProjection
+  consent flow while continuous listening was still open (or reopened moments later, before the
+  user had even tapped the consent dialog) - this OEM plays an audible "screen sharing started"
+  confirmation once granted, which the still-open mic picked up and misread as a spoken command,
+  sending Elene briefly haywire before she recovered. Same class of bug as the earlier incoming-
+  call/mic collision - fixed by holding the mic closed (haltListeningForCapture(), a new
+  awaitingCaptureConsent guard in startListening()) for the whole describe_screen/play_game
+  bootstrap window, not just the instant it's triggered, clearing it once a real frame (or a
+  failure) comes back. (2) "click on [a contact]'s chat" in WhatsApp kept landing on that
+  contact's avatar (opening their profile picture) instead of the chat row - root cause:
+  findNodeByText() took the very first accessibility-tree match for the name with no regard for
+  what kind of element it was, and an avatar's content-description is often the same name as the
+  row's own text label, with the avatar frequently coming first in tree order. Fixed to prefer an
+  actual TextView/EditText match over an image/icon one when both match, falling back to the
+  first match only if nothing text-like matched at all. Both fixes built, installed, no crash -
+  **not yet re-confirmed live** by the user that either specific bug is actually gone.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists
