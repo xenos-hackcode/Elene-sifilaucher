@@ -50,10 +50,18 @@ object RememberedFactLog {
         }.getOrDefault(emptyList())
     }
 
-    /** Newest-first, capped short so it doesn't blow out the backend prompt's context block -
-     * a handful of recent facts read out plainly, not the whole history at once. */
+    /** Newest-first (record() always inserts at index 0), capped short so it doesn't blow out
+     * the backend prompt's context block. Deliberately does NOT try to detect and delete
+     * "superseded" facts itself (e.g. an old name vs a newly corrected one) - reliably telling
+     * two facts are "about the same thing" from text alone is fragile. Instead the ordering
+     * itself carries the signal: facts are numbered oldest-to-newest-doesn't-matter, newest
+     * always listed FIRST, with an explicit instruction in the backend prompt that a later
+     * (earlier-listed) fact wins if two conflict - simple, robust, and doesn't require ever
+     * silently deleting something the user might still want visible in the Memory screen. */
     fun asContextString(context: Context, limit: Int = 20): String =
-        loadAll(context).take(limit).joinToString("; ") { it.text }
+        loadAll(context).take(limit).mapIndexed { i, fact ->
+            if (i == 0) "most recent: ${fact.text}" else fact.text
+        }.joinToString("; ")
 
     private fun saveAll(context: Context, list: List<RememberedFact>) {
         val arr = JSONArray()

@@ -1,12 +1,14 @@
 package com.example.scifilauncher
 
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,30 +18,32 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// simple time formatter (you can move to a utils file if you want)
 fun formatShortTime(millis: Long): String {
-    val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    val sdf = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault())
     return sdf.format(java.util.Date(millis))
 }
 
+/** Every genuine failed-fingerprint attempt on a device-owner confirmation - photo, location,
+ * and when, captured silently the moment a non-matching scan happens (see
+ * BiometricAuthActivity.onAuthenticationFailed / IntruderCaptureLog). */
 @Composable
 fun StorageScreen(
     themeColor: Color,
     isDark: Boolean,
     batteryMode: BatterySaverMode,
     lockPrefs: SharedPreferences,
-    logs: List<MainActivity.IntruderLog>,
-    allApps: List<AppItem>,
+    logs: List<IntruderCapture>,
     onBack: () -> Unit
-){
+) {
     val bg = if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5)
+    val textColor = if (isDark) Color.White else Color.Black
 
     Box(
         modifier = Modifier
@@ -58,7 +62,6 @@ fun StorageScreen(
                 .systemBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
         ) {
-            // Top bar
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = onBack) {
                     Text("< BACK")
@@ -76,19 +79,14 @@ fun StorageScreen(
 
             if (logs.isEmpty()) {
                 Text(
-                    text = "No intruder attempts yet.",
-                    color = if (isDark) Color.LightGray else Color.DarkGray
+                    text = "No failed fingerprint attempts yet.",
+                    color = if (isDark) Color.LightGray else Color.DarkGray,
+                    fontFamily = FontFamily.Monospace
                 )
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(logs) { log ->
-                        IntruderLogRow(
-                            log = log,
-                            allApps = allApps,
-                            isDark = isDark
-                        )
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(logs) { entry ->
+                        IntruderCaptureRow(entry, themeColor, textColor)
                     }
                 }
             }
@@ -97,66 +95,68 @@ fun StorageScreen(
 }
 
 @Composable
-private fun IntruderLogRow(
-    log: MainActivity.IntruderLog,
-    allApps: List<AppItem>,
-    isDark: Boolean
-) {
+private fun IntruderCaptureRow(entry: IntruderCapture, themeColor: Color, textColor: Color) {
     var expanded by remember { mutableStateOf(false) }
-
-    val appItem = remember(log.packageName, allApps) {
-        allApps.firstOrNull { it.packageName == log.packageName }
+    val photoBitmap = remember(entry.photoPath) {
+        entry.photoPath?.let { path -> runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
     }
-    val iconBitmap = appItem?.iconBitmap
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded }
-            .padding(vertical = 8.dp)
+            .padding(vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (iconBitmap != null) {
+            if (photoBitmap != null) {
                 Image(
-                    bitmap = iconBitmap.asImageBitmap(),
-                    contentDescription = log.appName,
-                    modifier = Modifier.size(32.dp)
+                    bitmap = photoBitmap.asImageBitmap(),
+                    contentDescription = "Captured photo",
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(6.dp))
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(10.dp))
             }
-
             Column {
                 Text(
-                    text = log.appName,
-                    color = if (isDark) Color.White else Color.Black,
-                    fontSize = 16.sp,
+                    text = entry.reason,
+                    color = textColor,
+                    fontSize = 14.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
-                    text = "Clicked ${log.count} times",
-                    color = if (isDark) Color.LightGray else Color.DarkGray,
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = "Last: ${formatShortTime(log.lastTime)}",
-                    color = if (isDark) Color.LightGray else Color.DarkGray,
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-
-        if (expanded) {
-            Spacer(Modifier.height(6.dp))
-            log.allTimes.forEach { t ->
-                Text(
-                    text = "• ${formatShortTime(t)}",
-                    color = if (isDark) Color.Gray else Color.DarkGray,
+                    text = formatShortTime(entry.timestamp),
+                    color = Color.Gray,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
+                if (photoBitmap == null) {
+                    Text(
+                        text = "No photo (camera permission wasn't available)",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
+        }
+        if (expanded && entry.lat != null && entry.lng != null) {
+            Text(
+                text = "Location: https://maps.google.com/?q=${entry.lat},${entry.lng}",
+                color = themeColor,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        } else if (expanded) {
+            Text(
+                text = "Location unavailable",
+                color = Color.Gray,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 6.dp)
+            )
         }
     }
 }

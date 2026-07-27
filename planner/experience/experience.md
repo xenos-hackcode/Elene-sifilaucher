@@ -233,6 +233,25 @@
   keep-screen-on actually holding through a real conversation, and remember_fact/remembered_facts
   actually surviving a real backend memory reset in practice.
 
+- (2026-07-27) Intruder Attempts rebuilt for real - the old version (MainActivity.IntruderLog,
+  StorageScreen) was confirmed dead: no photo/location fields at all, and nothing anywhere in the
+  codebase ever populated it (leftover scaffolding from the per-app lock system removed earlier
+  this project). New: SilentCameraCapture (headless Camera2 front-camera single-shot, no preview
+  surface) + IntruderCaptureLog (photo path/location/timestamp), triggered from
+  BiometricAuthActivity.onAuthenticationFailed() specifically - the real "a submitted fingerprint
+  didn't match" signal, distinct from onAuthenticationError (covers the legitimate owner tapping
+  Deny/cancelling/lockout, not an intrusion signal). Reuses SequenceMode's existing
+  captureLastLocation/loadLastKnownLocation rather than building new location code.
+  StorageScreen now actually displays photo thumbnail + maps link + timestamp per entry. Also:
+  Memory feature got a recency-wins fix (no fact is auto-deleted on a contradiction - e.g. an old
+  vs new stated name - but the newest fact is always listed first and explicitly marked, with a
+  backend prompt instruction to trust it over an older contradicted one) plus confirmed the
+  already-built tap-to-forget in the Memory screen satisfies "I should be able to delete what it
+  remembers." Backend redeployed (revision elene-backend-00028-ng8). Builds clean, installs with
+  no crash. **Not yet confirmed live**: an actual failed fingerprint scan producing a real photo +
+  location entry visible in Security > Storage, and the memory recency-wins behavior actually
+  working when two contradicting facts are told to Elene in sequence.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

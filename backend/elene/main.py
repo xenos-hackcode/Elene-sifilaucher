@@ -300,7 +300,12 @@ Remembering facts (durable, unlike your own conversation memory - see below):
   it as real, trustworthy background knowledge about the user, not something you're
   "remembering" live - use it naturally when relevant, don't narrate that you're consulting it.
 - There is currently no "forget_fact" command - the user removes entries themselves from the
-  Memory screen in Settings.
+  Memory screen in Settings. This means an old fact can still be present even after the user
+  tells you something new that contradicts it (e.g. they stated a name once, then later said a
+  different name) - the facts are NOT deduplicated for you. The first fact listed in
+  "remembered_facts" is always explicitly marked "most recent" - if any two remembered facts
+  genuinely conflict, always trust that most-recent one as current truth and act/speak
+  accordingly (e.g. use the newer name), never the older contradicted one.
 
 Proposing an update to the app itself (Stage 1 only - this NEVER changes anything by itself,
 it only queues a proposal that requires the user's own fingerprint to ever take effect; there

@@ -846,16 +846,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         }
     }
 
-    data class IntruderLog(
-        val packageName: String,
-        val appName: String,
-        val count: Int,
-        val lastTime: Long,
-        val allTimes: List<Long>
-    )
-
-    private val intruderLogs = mutableStateListOf<IntruderLog>()
-
     // Broadcast receiver for notification announcements
     // Device Owner apps can silently uninstall via PackageInstaller - no OS confirmation
     // dialog pops up - which is exactly the point: the confirmation the user sees is this
@@ -2371,8 +2361,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 isDark = isDark,
                                 batteryMode = batteryMode,
                                 lockPrefs = lockPrefs,
-                                logs = intruderLogs,
-                                allApps = allApps,
+                                logs = IntruderCaptureLog.loadAll(this@MainActivity),
                                 onBack = {
                                     showStorage = false
                                     showSecurity = true

@@ -1,9 +1,11 @@
 package com.example.scifilauncher
 
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import java.io.File
 
 /**
  * Minimal, dedicated FragmentActivity that only exists to host BiometricPrompt (which
@@ -32,6 +34,16 @@ class BiometricAuthActivity : FragmentActivity() {
                     setResult(RESULT_CANCELED)
                     finish()
                 }
+
+                // The real "someone tried and failed" signal - fires once per non-matching
+                // fingerprint scan, distinct from onAuthenticationError above (which covers the
+                // legitimate owner tapping "Deny", cancelling, or a lockout - not an intrusion
+                // signal at all). Can fire multiple times in one prompt session if someone keeps
+                // trying different fingers. Silent - the person attempting entry has no idea
+                // this ran, which is the whole point.
+                override fun onAuthenticationFailed() {
+                    captureIntruderAttempt()
+                }
             }
         )
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
@@ -44,6 +56,27 @@ class BiometricAuthActivity : FragmentActivity() {
             setResult(RESULT_CANCELED)
             finish()
         }
+    }
+
+    private fun captureIntruderAttempt() {
+        val reason = intent.getStringExtra(EXTRA_TITLE) ?: "Confirmation"
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            // No photo without the permission, but still worth logging that a failed attempt
+            // happened at all, with whatever location is available.
+            recordCapture(null, reason)
+            return
+        }
+        val outputDir = File(getExternalFilesDir(null), "IntruderCaptures")
+        SilentCameraCapture.captureFrontFacing(applicationContext, outputDir) { file ->
+            recordCapture(file?.absolutePath, reason)
+        }
+    }
+
+    private fun recordCapture(photoPath: String?, reason: String) {
+        val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
+        runCatching { captureLastLocation(applicationContext, lockPrefs) }
+        val loc = loadLastKnownLocation(lockPrefs)
+        IntruderCaptureLog.record(applicationContext, photoPath, loc?.first, loc?.second, reason)
     }
 
     companion object {
