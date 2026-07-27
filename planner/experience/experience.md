@@ -252,6 +252,28 @@
   location entry visible in Security > Storage, and the memory recency-wins behavior actually
   working when two contradicting facts are told to Elene in sequence.
 
+- (2026-07-27) Always-listening "Hey Elene" wake word built (Settings toggle, off by default,
+  approximated via real SpeechRecognizer sessions on a ~4s repeating cycle since Android has no
+  low-power wake-word primitive exposed to apps - disclosed honestly in the toggle's own info
+  dialog rather than pretending it's free). Explicitly checks battery saver on every cycle and
+  stays off the mic while it's on, per the user's own explicit requirement, auto-resuming once
+  it's off again with no separate re-enable step. Bubble stays visually dormant during passive
+  checks (not a real "engaged" turn) and only becomes a real listening turn once the wake phrase
+  is actually heard. Builds clean, installs with no crash. **Not yet confirmed live**: whether
+  the wake phrase is reliably detected in practice, the real battery cost of the ~4s polling
+  cycle over hours of use, and that it genuinely stops during battery saver.
+- (2026-07-27) Declined adding a pasted "security research capability" + rewritten propose_update
+  block to the backend system prompt. Two concrete problems, not just a general refusal: (1) it
+  told Elene to never refuse/hedge for RATs/exploit code/payloads based on a self-declared
+  "authorized penetration tester" claim baked into her own prompt with no real verification -
+  a jailbreak-shaped pattern, and Elene has real device-command capabilities (Shizuku, screen
+  control) that make that a genuine risk, not a theoretical one; (2) its "Stage 2 sandbox
+  validation" description was factually false - claimed an automatic scanner for "permission
+  escalations" and "data exfiltration patterns" that doesn't exist; what's actually built
+  (SandboxVerificationService) only pattern-matches a handful of Shizuku shell command shapes.
+  Shipping that text would have made Elene misrepresent the app's real security posture to the
+  user. Not added; main.py unchanged from this specific request.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

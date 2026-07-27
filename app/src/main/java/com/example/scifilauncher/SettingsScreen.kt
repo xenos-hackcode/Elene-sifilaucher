@@ -60,6 +60,8 @@ fun SettingsScreen(
     var eleneVoiceOn by remember { mutableStateOf(themePrefs.getBoolean("elene_voice_on", true)) }
     var continuousListeningOn by remember { mutableStateOf(themePrefs.getBoolean("elene_continuous_listening", true)) }
     var showContinuousListeningInfo by remember { mutableStateOf(false) }
+    var alwaysListeningOn by remember { mutableStateOf(themePrefs.getBoolean("elene_always_listening", false)) }
+    var showAlwaysListeningInfo by remember { mutableStateOf(false) }
 
 
     var showTimeFormatPanel by remember { mutableStateOf(false) }
@@ -201,12 +203,22 @@ fun SettingsScreen(
                         label = "Elene keeps listening",
                         themeColor = themeColor,
                         checked = continuousListeningOn,
-                        showDivider = false,
                         onToggle = {
                             continuousListeningOn = it
                             themePrefs.edit().putBoolean("elene_continuous_listening", continuousListeningOn).apply()
                         },
                         onInfoClick = { showContinuousListeningInfo = true }
+                    )
+                    PanelToggleRow(
+                        label = "Always listening (\"Hey Elene\")",
+                        themeColor = themeColor,
+                        checked = alwaysListeningOn,
+                        showDivider = false,
+                        onToggle = {
+                            alwaysListeningOn = it
+                            themePrefs.edit().putBoolean("elene_always_listening", alwaysListeningOn).apply()
+                        },
+                        onInfoClick = { showAlwaysListeningInfo = true }
                     )
                 }
 
@@ -277,6 +289,34 @@ fun SettingsScreen(
                             "equivalent like \"go away\").\n\n" +
                             "Off: she stops listening automatically after every single reply, " +
                             "the same as before - you'll need to tap the bubble again each time.",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp
+                    )
+                }
+            )
+        }
+
+        if (showAlwaysListeningInfo) {
+            AlertDialog(
+                onDismissRequest = { showAlwaysListeningInfo = false },
+                confirmButton = {
+                    TextButton(onClick = { showAlwaysListeningInfo = false }) {
+                        Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                },
+                title = { Text("Always listening (\"Hey Elene\")", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        "On: Elene periodically listens for \"Hey Elene\" even when you haven't " +
+                            "tapped the bubble, and starts a real listening turn the moment she " +
+                            "hears it - you can still tap the bubble any time too, this doesn't " +
+                            "replace that.\n\n" +
+                            "Honest limitation: Android has no dedicated low-power wake-word " +
+                            "engine exposed to apps, so this works by running real short " +
+                            "listening sessions every few seconds - it costs real battery, more " +
+                            "than \"Elene keeps listening\" above. Automatically turns off " +
+                            "whenever battery saver is on, and resumes on its own once it's off " +
+                            "again.",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp
                     )

@@ -117,6 +117,7 @@ class ScifiAccessibilityService : AccessibilityService() {
             }
         }
         registerCallStateListener()
+        scheduleWakeWordCheck(delayMillis = 4000L)
     }
 
     override fun onDestroy() {
@@ -129,6 +130,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { unregisterReceiver(voipCallReceiver) }
         runCatching { unregisterReceiver(installReceiver) }
         runCatching { unregisterReceiver(perceptionReceiver) }
+        bubbleHandler.removeCallbacks(wakeWordCheckRunnable)
         if (gameLoopActive) runCatching {
             startService(Intent(this, ScreenPerceptionService::class.java).setAction(ScreenPerceptionService.ACTION_STOP_CAPTURE))
         }
@@ -496,7 +498,14 @@ class ScifiAccessibilityService : AccessibilityService() {
     // Continuous listening: the bubble only ever goes dormant when "stop listening" is heard
     // (see handleSpokenText) - every other exit (no speech, recognizer error, backend
     // unreachable, reply finished speaking) loops back into listening instead of closing.
-    private fun startListening() {
+    //
+    // [isWakeWordCheck] - true for a passive "Hey Elene" always-listening cycle (see
+    // scheduleWakeWordCheck below): a real SpeechRecognizer session still runs (Android's API
+    // has no separate low-power wake-word primitive - see the honest caveat in
+    // SettingsScreen's info dialog about the real battery cost of this approach), but the
+    // bubble stays visually dormant (this isn't an engaged turn yet) and the result is checked
+    // for the wake phrase instead of being dispatched as a real command.
+    private fun startListening(isWakeWordCheck: Boolean = false) {
         listeningStopped = false
         // Confirmed real gap (found via user-reported edge case, not assumed): the bubble
         // correctly hides itself when the keyguard is up (checkBubbleVisibilityNow), but that's
@@ -509,11 +518,13 @@ class ScifiAccessibilityService : AccessibilityService() {
         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
         if (keyguardManager?.isKeyguardLocked == true) {
             setBubbleState(EleneBubbleState.DORMANT)
+            if (isWakeWordCheck) scheduleWakeWordCheck()
             return
         }
         // Calls are still an absolute block - never grab the mic mid-call, no exceptions.
         if (isPhoneBusyWithCall(this)) {
             setBubbleState(EleneBubbleState.DORMANT)
+            if (isWakeWordCheck) scheduleWakeWordCheck()
             return
         }
         // Real bug found live: the MediaProjection consent dialog (and this OEM's audible
@@ -523,6 +534,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         // bootstrap, not just the instant it's triggered.
         if (awaitingCaptureConsent) {
             setBubbleState(EleneBubbleState.DORMANT)
+            if (isWakeWordCheck) scheduleWakeWordCheck()
             return
         }
         // Media playing used to also go straight to dormant (the same "don't misread the movie
@@ -530,14 +542,20 @@ class ScifiAccessibilityService : AccessibilityService() {
         // used at all while music/video was playing. Taking real AUDIOFOCUS_GAIN instead
         // actually pauses well-behaved media apps for the turn (same as any real assistant),
         // which solves both problems at once: you get an answer, and there's no competing audio
-        // left to misread once it's paused.
-        if (isMediaPlaying(this) && mediaFocusHandle == null) {
+        // left to misread once it's paused. Skipped for a passive wake-word check - not worth
+        // pausing the user's music every few seconds just to listen for a wake phrase that
+        // usually won't be there.
+        if (isMediaPlaying(this) && mediaFocusHandle == null && !isWakeWordCheck) {
             mediaFocusHandle = requestAudioFocus(this, transient = false)
         }
-        setBubbleState(EleneBubbleState.LISTENING)
+        setBubbleState(if (isWakeWordCheck) EleneBubbleState.DORMANT else EleneBubbleState.LISTENING)
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            setBubbleState(EleneBubbleState.UNRESPONSIVE)
-            retryListeningSoon()
+            if (isWakeWordCheck) {
+                scheduleWakeWordCheck()
+            } else {
+                setBubbleState(EleneBubbleState.UNRESPONSIVE)
+                retryListeningSoon()
+            }
             return
         }
         val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
@@ -550,6 +568,16 @@ class ScifiAccessibilityService : AccessibilityService() {
                 val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 runCatching { recognizer.destroy() }
                 speechRecognizer = null
+                if (isWakeWordCheck) {
+                    if (!text.isNullOrBlank() && containsWakeWord(text)) {
+                        // The wake phrase itself was just consumed - open a REAL turn now,
+                        // same as a bubble tap, for the actual command that follows.
+                        startListening(isWakeWordCheck = false)
+                    } else {
+                        scheduleWakeWordCheck()
+                    }
+                    return
+                }
                 if (text.isNullOrBlank()) {
                     setBubbleState(EleneBubbleState.UNRESPONSIVE)
                     retryListeningSoon()
@@ -562,6 +590,10 @@ class ScifiAccessibilityService : AccessibilityService() {
                 android.util.Log.d("EleneBubble", "SpeechRecognizer error code=$error")
                 runCatching { recognizer.destroy() }
                 speechRecognizer = null
+                if (isWakeWordCheck) {
+                    scheduleWakeWordCheck()
+                    return
+                }
                 setBubbleState(EleneBubbleState.UNRESPONSIVE)
                 retryListeningSoon()
             }
@@ -579,6 +611,50 @@ class ScifiAccessibilityService : AccessibilityService() {
 
     private fun continuousListeningEnabled(): Boolean =
         getSharedPreferences("theme_prefs", MODE_PRIVATE).getBoolean("elene_continuous_listening", true)
+
+    // ---- Always listening ("Hey Elene") ----
+    // Honest limitation, disclosed in SettingsScreen's own info dialog too: Android has no
+    // separate low-power wake-word primitive exposed to apps - this is real SpeechRecognizer
+    // sessions run back-to-back on a timer, which costs real battery, unlike a purpose-built
+    // wake-word engine (e.g. Picovoice Porcupine) would. Explicitly disabled during battery
+    // saver, per the user's own requirement - checked fresh on every cycle, not just once.
+    private fun alwaysListeningEnabled(): Boolean =
+        getSharedPreferences("theme_prefs", MODE_PRIVATE).getBoolean("elene_always_listening", false)
+
+    private fun containsWakeWord(text: String): Boolean {
+        val normalized = text.trim().lowercase()
+        return listOf("hey elene", "hey elena", "ok elene", "okay elene", "elene").any { normalized.contains(it) }
+    }
+
+    private val wakeWordCheckRunnable = Runnable { runWakeWordCycleIfEligible() }
+
+    private fun runWakeWordCycleIfEligible() {
+        if (!alwaysListeningEnabled()) return
+        if (speechRecognizer != null) {
+            // Something else already has the mic (a real conversation, a call announcement,
+            // etc.) - don't compete with it, just check again later.
+            scheduleWakeWordCheck()
+            return
+        }
+        if (bubbleView?.state != EleneBubbleState.DORMANT) {
+            scheduleWakeWordCheck()
+            return
+        }
+        val batteryPrefs = getSharedPreferences("battery_prefs", MODE_PRIVATE)
+        if (loadBatterySaverMode(batteryPrefs) != BatterySaverMode.OFF) {
+            // Battery saver is on - stay off the mic entirely, but keep checking on the same
+            // schedule so this resumes automatically the moment it's turned back off, with no
+            // separate re-enable step needed.
+            scheduleWakeWordCheck()
+            return
+        }
+        startListening(isWakeWordCheck = true)
+    }
+
+    private fun scheduleWakeWordCheck(delayMillis: Long = 4000L) {
+        bubbleHandler.removeCallbacks(wakeWordCheckRunnable)
+        bubbleHandler.postDelayed(wakeWordCheckRunnable, delayMillis)
+    }
 
     @Volatile private var voiceIdCheckInProgress = false
 
