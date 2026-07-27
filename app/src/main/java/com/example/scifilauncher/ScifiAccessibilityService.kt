@@ -2,7 +2,10 @@ package com.example.scifilauncher
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -53,6 +56,18 @@ class ScifiAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        runCatching {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenStateReceiver, filter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(screenStateReceiver, filter)
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -61,9 +76,36 @@ class ScifiAccessibilityService : AccessibilityService() {
         hideBubble()
         runCatching { speechRecognizer?.destroy() }
         runCatching { bubbleTts?.shutdown() }
+        runCatching { unregisterReceiver(screenStateReceiver) }
         bubbleServiceScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    // Confirmed real gap (found via on-device testing, not assumed): locking the screen via
+    // timeout or the power button - rather than switching to a new app - doesn't reliably fire a
+    // TYPE_WINDOW_STATE_CHANGED accessibility event for the keyguard on this OEM, so the bubble
+    // could stay showing (over whatever app was foreground when it locked) with no accessibility
+    // event ever arriving to trigger a re-check. ACTION_SCREEN_OFF/ON are real system broadcasts
+    // that fire reliably regardless of accessibility-event quirks, so they're used as a second,
+    // independent path to the same keyguard check - belt and suspenders, since this bubble
+    // showing on a genuinely locked phone is a real lock-screen bypass, not a cosmetic bug.
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    // Screen is off now; whatever comes back (keyguard or not) gets decided
+                    // fresh on SCREEN_ON/USER_PRESENT - hide immediately in the meantime so
+                    // there's no window where the bubble is composited over a soon-to-be-locked
+                    // screen.
+                    bubbleHandler.removeCallbacks(visibilityRunnable)
+                    hideBubble()
+                }
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    checkBubbleVisibilityNow()
+                }
+            }
+        }
     }
 
     // ---- Cross-app Elene bubble ----
@@ -85,15 +127,15 @@ class ScifiAccessibilityService : AccessibilityService() {
     // Waiting for events to settle before actually committing to show/hide fixes that.
     private var pendingVisibilityPkg: String? = null
     private var wasLocked = false
-    private val visibilityRunnable = Runnable {
-        val pkg = pendingVisibilityPkg ?: return@Runnable
-        // Package-name matching alone isn't a reliable way to detect the lock screen - the
-        // keyguard's exact package varies by OEM/Android version, so relying on it (e.g. just
-        // excluding "com.android.systemui") can miss cases entirely, and a floating bubble
-        // that lets you talk to Elene - who can open apps, click things on screen, etc. -
-        // showing up ON a locked phone would be a real bypass of the lock screen, not a
-        // cosmetic issue. KeyguardManager.isKeyguardLocked() is the actual, OEM-independent
-        // signal for "is this phone currently locked", checked fresh right before acting.
+
+    // Package-name matching alone isn't a reliable way to detect the lock screen - the
+    // keyguard's exact package varies by OEM/Android version, so relying on it (e.g. just
+    // excluding "com.android.systemui") can miss cases entirely, and a floating bubble
+    // that lets you talk to Elene - who can open apps, click things on screen, etc. -
+    // showing up ON a locked phone would be a real bypass of the lock screen, not a
+    // cosmetic issue. KeyguardManager.isKeyguardLocked() is the actual, OEM-independent
+    // signal for "is this phone currently locked", checked fresh right before acting.
+    private fun checkBubbleVisibilityNow() {
         val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
         val isLocked = keyguardManager?.isKeyguardLocked == true
         wasLocked = isLocked
@@ -101,6 +143,11 @@ class ScifiAccessibilityService : AccessibilityService() {
         // separate bubble wouldn't sit on screen next to this one - that bubble is gone now,
         // this is the only one, so it belongs on the home screen too.
         if (isLocked) hideBubble() else showBubble()
+    }
+
+    private val visibilityRunnable = Runnable {
+        pendingVisibilityPkg ?: return@Runnable
+        checkBubbleVisibilityNow()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

@@ -30,6 +30,15 @@
   played). Changed to request real AudioFocus (pausing well-behaved media) instead of refusing
   to listen. ** Not yet tested on-device. **
 
+- Real on-device test (2026-07-26/27), via adb screenshots + dumpsys, not assumed: Elene's
+  floating bubble was confirmed visible over the actual Android lock screen after locking via the
+  power button while an app was in the foreground (screenshot + `isKeyguardShowing=true` from
+  `dumpsys window` both captured at once). Fixed (see errors/) and re-confirmed hidden across two
+  separate lock/wake cycles after the fix. This is exactly the kind of thing the standing rule
+  below exists to catch - it would never have shown up from a plain `gradlew compile` check, only
+  from actually driving the real device through the exact sequence (lock via timeout/power button,
+  not via switching apps).
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

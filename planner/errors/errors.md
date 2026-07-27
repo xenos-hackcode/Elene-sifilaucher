@@ -29,3 +29,14 @@
   was looking for separate word tokens in sequence. Fixed the matcher, then the whole
   digit-challenge approach was scrapped anyway (see experience/) in favor of a real-word
   challenge, then simplified further back to plain record+verify.
+- Real, confirmed-on-device: Elene's cross-app floating bubble could stay visible ON TOP of the
+  actual Android lock screen. Root cause: the bubble's show/hide logic ran entirely off
+  `TYPE_WINDOW_STATE_CHANGED` accessibility events, and locking the screen via timeout or the
+  power button (as opposed to switching to a different app) doesn't reliably fire that event for
+  the keyguard on this OEM (Samsung One UI) - so the bubble just stayed in whatever state it was
+  last set to. Confirmed via `adb shell dumpsys window | grep isKeyguardShowing` (true) alongside
+  a `screencap` showing the bubble still on screen. Fixed by adding a `BroadcastReceiver` for
+  `ACTION_SCREEN_OFF`/`ACTION_SCREEN_ON`/`ACTION_USER_PRESENT` as a second, independent path to
+  the same `isKeyguardLocked()` check - these system broadcasts fire reliably regardless of
+  accessibility-event quirks. Re-tested twice after the fix (lock via power button while an app
+  was foreground, wake without unlocking, screenshot) - bubble stayed hidden both times.
