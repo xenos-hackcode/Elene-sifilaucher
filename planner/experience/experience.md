@@ -70,6 +70,34 @@
   calendar/call-answer/voice-memo round trips listed as unconfirmed above - this entry only
   confirms the install is healthy, not that the features work end to end.
 
+- (2026-07-27) Shizuku setup, done for real on this exact phone (Android 16 / SDK 36) and
+  confirmed working via adb, not assumed: Play Store didn't have it available for this OS
+  version, so the official release APK (v13.6.0, from `github.com/RikkaApps/Shizuku` releases -
+  that specific version's changelog explicitly lists "Support Android16 QPR1") was downloaded
+  and sideloaded with `adb install` instead. Real steps that worked, in order:
+  1. Wireless debugging was already on (Settings > Developer options > Wireless debugging).
+  2. Open the Shizuku app > Wireless debugging section > "Pair device with pairing code." Its
+     own auto-search for the pairing service hung/never completed - worked instead by opening
+     Settings > Developer options > Wireless debugging > "Pair device with pairing code" directly
+     (which shows the IP, port, and a 6-digit code) and entering those into Shizuku manually
+     rather than waiting on its auto-discovery.
+  3. Pairing alone does NOT start the service - confirmed via `dumpsys activity services
+     moe.shizuku.privileged.api` showing nothing right after a successful pairing. The service
+     only actually starts after separately tapping **Start** in the Shizuku app's main screen
+     (a different button from pairing).
+  4. Confirmed truly running via `adb shell ps -A`: a `shizuku_server` process owned by `shell`
+     (real ADB-shell privilege level, not just app-level), plus SciFiLauncher's own
+     `com.example.scifilauncher:shizuku` user-service process bound to it. Both were present only
+     after step 3, not after step 2.
+  5. Granting SciFiLauncher's own access (Security > SHIZUKU > tap the row) worked cleanly once
+     the service was actually running - it pops Shizuku's own system permission dialog, separate
+     from anything this app draws itself.
+  Per the code's own doc comment in `ShizukuManager.kt`: pairing is remembered across reboots, but
+  the running service is not - expect to reopen Shizuku and tap Start again after most restarts
+  unless the device is rooted. Shizuku must stay installed for this to keep working; uninstalling
+  it makes `ShizukuManager.isAvailable()` go back to false and the app silently falls back to the
+  weaker `killBackgroundProcesses()` path instead of a real force-stop.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

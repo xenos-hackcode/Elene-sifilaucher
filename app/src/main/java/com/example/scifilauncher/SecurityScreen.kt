@@ -275,12 +275,21 @@ fun SecurityScreen(
                                     "(matching Settings > App Info > Force Stop exactly), " +
                                     "instead of the lighter \"stop background processes\" this " +
                                     "app falls back to without it.\n\n" +
-                                    "Setup happens outside this app: install Shizuku, pair it " +
-                                    "with wireless debugging (Developer Options), and start " +
-                                    "its service. On most phones this needs redoing after a " +
-                                    "reboot unless the device is rooted. Nothing here works " +
-                                    "silently - you'll see Shizuku's own permission prompt the " +
-                                    "first time this app asks.",
+                                    "Install: search \"Shizuku\" on the Play Store first. If your " +
+                                    "Android version isn't listed there yet (seen on Android " +
+                                    "16), get the official APK instead from " +
+                                    "github.com/RikkaApps/Shizuku (Releases tab) and install " +
+                                    "that file directly.\n\n" +
+                                    "Setup happens outside this app: open Shizuku, go to its " +
+                                    "Wireless debugging section and pair it with Developer " +
+                                    "Options > Wireless debugging (use \"Pair device with " +
+                                    "pairing code\" directly from Developer Options if Shizuku's " +
+                                    "own auto-search hangs), then tap Start - pairing alone does " +
+                                    "not start the service, Start is a separate step. On most " +
+                                    "phones Start needs redoing after a reboot unless the device " +
+                                    "is rooted (pairing itself is remembered). Nothing here " +
+                                    "works silently - you'll see Shizuku's own permission prompt " +
+                                    "the first time this app asks.",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
