@@ -157,6 +157,40 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         }
     }
 
+    private var pendingCaptureMode: String? = null
+
+    /** Consent flow for Elene's screen-perception capture (describe_screen / play_game) -
+     * mirrors screenRecordLauncher above exactly, since MediaProjectionManager's consent intent
+     * can only be resolved via an Activity. Orchestration (deciding when to actually request a
+     * frame, calling the backend, dispatching gestures) all lives in ScifiAccessibilityService,
+     * not here - this is purely "show the system prompt, start the isolated capture service,
+     * hand control back" since MainActivity and the accessibility service share this process
+     * and can call each other directly, unlike ScreenPerceptionService in :recorder. */
+    private val screenCaptureLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val mode = pendingCaptureMode
+        if (result.resultCode == RESULT_OK && result.data != null && mode != null) {
+            val svcIntent = Intent(this, ScreenPerceptionService::class.java).apply {
+                putExtra("resultCode", result.resultCode)
+                putExtra("data", result.data)
+                putExtra("mode", mode)
+            }
+            ContextCompat.startForegroundService(this, svcIntent)
+            ScifiAccessibilityService.instance?.onPerceptionCaptureStarted(mode == "single")
+            moveTaskToBack(true)
+        } else {
+            ScifiAccessibilityService.instance?.onPerceptionCaptureDenied()
+        }
+    }
+
+    private fun beginScreenCapture(mode: String) {
+        pendingCaptureMode = mode
+        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+        runCatching { screenCaptureLauncher.launch(mpm.createScreenCaptureIntent()) }
+            .onFailure { ScifiAccessibilityService.instance?.onPerceptionCaptureDenied() }
+    }
+
     /** Entry point for starting a recording with the options chosen on ScreenRecordSetupScreen -
      * [cropRect] is null for full screen, or the region picked via CropSelectorOverlay (in raw
      * screen-pixel coordinates) to record only that part of the screen. */
@@ -1427,6 +1461,21 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 toggleScreenRecord(true) { recording -> screenRecordingState = recording }
                                 commandReplyOverride = "Stopped and saving the recording."
                             }
+                        }
+                        // Bridged from ScifiAccessibilityService, which has already stashed the
+                        // target package/hint in its own fields before triggering this - purely
+                        // mechanical here, no speaking: the accessibility service drives the
+                        // whole describe/play flow once capture starts.
+                        "describe_screen_capture" -> beginScreenCapture("single")
+                        "play_game_capture" -> beginScreenCapture("loop")
+                        // Reachable both from the cross-app bubble (handled entirely in
+                        // ScifiAccessibilityService.handleOverlayCommand) AND from typing into
+                        // this screen's own chat panel, which routes here instead - delegate to
+                        // the same orchestration either way rather than duplicating it.
+                        "describe_screen" -> screenControl { it.startDescribeScreen(arg) }
+                        "play_game" -> screenControl { it.startGameLoop(arg) }
+                        "stop_game" -> screenControl {
+                            if (it.isGameLoopActive()) it.stopGameLoop("Stopped playing.") else speak("Not currently playing.")
                         }
                         "schedule" -> if (arg != null) {
                             // "schedule:<minutes>:<innerCommand>" - the backend wraps any

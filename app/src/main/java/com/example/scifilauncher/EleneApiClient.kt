@@ -16,6 +16,19 @@ data class EleneResponse(
     val commands: List<String> = command?.let { listOf(it) } ?: emptyList()
 )
 
+/** [x]/[y] are a single tap target, [x2]/[y2] a swipe's end point (both null for a plain tap).
+ * Coordinates are in the SAME downscaled frame the image was sent in, not full-screen pixels -
+ * callers must scale up using the frame/full width and height ScreenPerceptionService reports. */
+data class GameMoveDecision(
+    val action: String, // "tap" | "swipe" | "wait" | "give_up"
+    val x: Int?,
+    val y: Int?,
+    val x2: Int?,
+    val y2: Int?,
+    val reasoning: String,
+    val gameOver: Boolean
+)
+
 object EleneApiClient {
 
     private const val ELENE_BASE_URL = "https://elene-backend-717899371194.us-central1.run.app"
@@ -115,6 +128,77 @@ object EleneApiClient {
             }
         } catch (e: Exception) {
             Log.e("EleneApiClient", "TTS fetch failed", e)
+            null
+        }
+    }
+
+    /** One-shot "what's on my screen" - plain-text reply, no JSON forcing needed since it's
+     * spoken straight back via TTS. */
+    suspend fun describeScreen(imageBytes: ByteArray, question: String?): String? = withContext(Dispatchers.IO) {
+        try {
+            val root = JSONObject().apply {
+                put("image_base64", android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP))
+                put("question", question ?: JSONObject.NULL)
+            }
+            val body = RequestBody.create(jsonMediaType, root.toString())
+            val request = Request.Builder()
+                .url("$ELENE_BASE_URL/elene/describe_screen")
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("EleneApiClient", "describe_screen HTTP error: ${response.code}")
+                    return@withContext null
+                }
+                val respBody = response.body?.string() ?: return@withContext null
+                JSONObject(respBody).optString("description", "").ifBlank { null }
+            }
+        } catch (e: Exception) {
+            Log.e("EleneApiClient", "describe_screen call failed", e)
+            null
+        }
+    }
+
+    /** Deliberately separate from sendText/describeScreen - a much more constrained response
+     * format for the turn-based game auto-play loop, stateless on the server (recentMoves
+     * carries continuity instead of a server-side session), kept fast and cheap per call. */
+    suspend fun decideGameMove(
+        imageBytes: ByteArray,
+        gameHint: String?,
+        recentMoves: List<String>
+    ): GameMoveDecision? = withContext(Dispatchers.IO) {
+        try {
+            val root = JSONObject().apply {
+                put("image_base64", android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP))
+                put("game_hint", gameHint ?: JSONObject.NULL)
+                put("recent_moves", org.json.JSONArray(recentMoves))
+            }
+            val body = RequestBody.create(jsonMediaType, root.toString())
+            val request = Request.Builder()
+                .url("$ELENE_BASE_URL/elene/game_move")
+                .post(body)
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("EleneApiClient", "game_move HTTP error: ${response.code}")
+                    return@withContext null
+                }
+                val respBody = response.body?.string() ?: return@withContext null
+                val json = JSONObject(respBody)
+                GameMoveDecision(
+                    action = json.optString("action", "wait"),
+                    x = json.optInt("x", -1).takeIf { it >= 0 },
+                    y = json.optInt("y", -1).takeIf { it >= 0 },
+                    x2 = json.optInt("x2", -1).takeIf { it >= 0 },
+                    y2 = json.optInt("y2", -1).takeIf { it >= 0 },
+                    reasoning = json.optString("reasoning", ""),
+                    gameOver = json.optBoolean("game_over", false)
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("EleneApiClient", "game_move call failed", e)
             null
         }
     }

@@ -116,6 +116,22 @@
   install after the fix: `install_flags_prefs.xml` now correctly records it (sideloaded=true,
   flagged permissions correctly identified) - confirmed working, not assumed.
 
+- (2026-07-27) Screen perception (describe_screen) + turn-based game auto-play (play_game/
+  stop_game) built per the plan in declarative-toasting-glacier.md. Confirmed so far: builds
+  clean, installs with no crash, accessibility service reconnects. Backend endpoints
+  (/elene/describe_screen, /elene/game_move) smoke-tested directly via curl with a real image -
+  both return correctly-shaped responses (a real description, and a real {action, x, y,
+  reasoning, game_over} decision). Backend deployed (revision elene-backend-00024-rbq).
+  **Not yet confirmed**: the actual voice/chat-triggered end-to-end flow - the MediaProjection
+  consent dialog appearing, a real screenshot being captured and correctly described, the
+  game-loop actually tapping a real game, the app-switch auto-stop, and the safety caps. Tried
+  to verify headlessly via adb UI-tapping and stopped partway through - the tap landed on the
+  cross-app accessibility bubble while it happened to be floating over a real WhatsApp screen
+  from actual prior device use, which is exactly the kind of unpredictable real state blind
+  automated tapping shouldn't be guessing around. This needs real live testing (say "what's on
+  my screen" / "play this game" to the phone), same as every other voice-triggered feature in
+  this project - not something to mark done from a clean build alone.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

@@ -46,6 +46,15 @@ class AlertEmailRequest(BaseModel):
 class TtsRequest(BaseModel):
     text: str
 
+class DescribeScreenRequest(BaseModel):
+    image_base64: str
+    question: Optional[str] = None
+
+class GameMoveRequest(BaseModel):
+    image_base64: str
+    game_hint: Optional[str] = None
+    recent_moves: List[str] = []
+
 # ---- ENDPOINT ----
 
 @app.post("/elene/chat", response_model=EleneReply)
@@ -207,6 +216,20 @@ Rules:
   - "start_recording" / "stop_recording" (an explicit voice memo, NOT screen recording - the
     user says something like "start recording" / "record a voice note" / "stop recording".
     Distinct from start_screen_recording/stop_screen_recording, which are about the screen.)
+  - "describe_screen" or "describe_screen:<question>" (the user asks what's on their screen,
+    to read something on screen, or asks a question about what's currently visible - e.g.
+    "what's on my screen", "read this to me", "what does this say", "describe_screen:what's
+    the total on this receipt". This is the ONLY way Elene can actually see the screen - every
+    other command works off text/labels, never pixels, so use this whenever the request is
+    genuinely about looking at something rather than a command you already know how to run.)
+  - "play_game" or "play_game:<hint>" (the user asks Elene to play a game for them, e.g. "play
+    this for me", "can you play this game", "play_game:candy crush". IMPORTANT: only offer or
+    accept this for slow, turn-based games (word games, match-3 without a timer, card games,
+    puzzles) - Elene thinks for 1-4+ seconds per move since it involves a real screenshot and a
+    real decision each time, which does not work for fast/reflex/timed games. If the user asks
+    for a fast-paced game, say so honestly rather than issuing the command.)
+  - "stop_game" (the user asks Elene to stop playing/stop the game loop - distinct from
+    stop_listening, which dismisses the mic entirely rather than just ending a play session.)
 - Turning the phone itself off/rebooting it is NOT possible for any app on a normal,
   non-rooted device - it's an OS-level restriction. If the user asks for that, explain this
   plainly in "mode": "chat" rather than inventing a command for it.
@@ -359,6 +382,94 @@ async def alert_email(body: AlertEmailRequest) -> Dict[str, Any]:
         print("Error sending alert email:", e)
         return {"ok": False, "error": str(e)}
 
+
+@app.post("/elene/describe_screen")
+async def describe_screen(body: DescribeScreenRequest) -> Dict[str, Any]:
+    """One-shot 'what's on my screen' - Elene's only real visual perception (everything else
+    works off Accessibility Tree text, never pixels). Deliberately separate from /elene/chat:
+    plain-text reply, no JSON forcing needed since it's spoken straight back via TTS."""
+    prompt = (
+        "You are Elene's vision module. You're given a screenshot of an Android phone screen. "
+        "Describe concisely what's on it - 2-3 sentences unless the user's question needs more "
+        "detail. If a question is given, answer it directly using only what's visible. Speak "
+        "plainly, no markdown, no bullet points - this gets read aloud."
+    )
+    user_text = body.question if body.question else "What's on this screen?"
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{body.image_base64}"}},
+                    ],
+                },
+            ],
+        )
+        description = response.choices[0].message.content or ""
+        return {"description": description.strip()}
+    except Exception as e:
+        print("Error calling OpenAI (describe_screen):", e)
+        return {"description": None}
+
+
+@app.post("/elene/game_move")
+async def game_move(body: GameMoveRequest) -> Dict[str, Any]:
+    """Decides the next move for a SLOW, TURN-BASED game only - deliberately separate from
+    /elene/chat: a much more constrained response format, and stateless (recent_moves carries
+    continuity from the client instead of a server-side session), kept fast and cheap per call."""
+    prompt = """
+You are Elene's game-playing module for a SLOW, TURN-BASED mobile game only (word games,
+non-timed match-3, card games, puzzles) - never a fast/reflex game. You're given a screenshot
+and must decide ONE next move, fast and clearly. Return JSON only, this exact schema:
+{
+  "action": "tap" or "swipe" or "wait" or "give_up",
+  "x": <int, tap x-coordinate or swipe start x - required for tap/swipe>,
+  "y": <int, tap y-coordinate or swipe start y - required for tap/swipe>,
+  "x2": <int, swipe end x - only for swipe>,
+  "y2": <int, swipe end y - only for swipe>,
+  "reasoning": "very short reason, under 15 words",
+  "game_over": true or false
+}
+Coordinates are pixel positions within the screenshot you were given, not the phone's real
+screen size - do not guess a different scale. Use "wait" if nothing useful can be done yet.
+Use "give_up" if you genuinely cannot tell what move to make. Set game_over true if the
+screenshot clearly shows a game-over/results/win screen rather than active gameplay.
+"""
+    game_hint_line = f"The user said this game is: {body.game_hint}." if body.game_hint else ""
+    recent_line = f"Recent moves so far: {'; '.join(body.recent_moves)}." if body.recent_moves else "This is the first move."
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"{game_hint_line} {recent_line}".strip()},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{body.image_base64}"}},
+                    ],
+                },
+            ],
+        )
+        raw = response.choices[0].message.content or "{}"
+        decision = json.loads(raw)
+        return {
+            "action": decision.get("action", "wait"),
+            "x": decision.get("x"),
+            "y": decision.get("y"),
+            "x2": decision.get("x2"),
+            "y2": decision.get("y2"),
+            "reasoning": decision.get("reasoning", ""),
+            "game_over": bool(decision.get("game_over", False)),
+        }
+    except Exception as e:
+        print("Error calling OpenAI (game_move):", e)
+        return {"action": "give_up", "x": None, "y": None, "x2": None, "y2": None, "reasoning": "backend error", "game_over": False}
 
 
 # ---- Laptop remote control relay ----

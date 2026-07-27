@@ -44,7 +44,9 @@ val ELENE_COMMANDS: List<EleneCommandDoc> = listOf(
     EleneCommandDoc("force_stop_app", "\"force stop Instagram\", \"kill that app\"", "Actually stops the running process (stronger than freeze). A genuine force-stop needs Shizuku set up - otherwise it stops background processes instead and says so."),
     EleneCommandDoc("download_app", "\"download TikTok\", \"get me Spotify\"", "Opens the Play Store search for an app that isn't installed yet."),
     EleneCommandDoc("schedule", "\"download TikTok in 2 hours\"", "Delays a command (currently only download_app supports this) until the time you gave."),
-    EleneCommandDoc("remember_avoid / forget_avoid", "\"don't bring up X again\", \"stop avoiding X\"", "Tells Elene to stop (or resume) mentioning a topic in conversation.")
+    EleneCommandDoc("remember_avoid / forget_avoid", "\"don't bring up X again\", \"stop avoiding X\"", "Tells Elene to stop (or resume) mentioning a topic in conversation."),
+    EleneCommandDoc("describe_screen", "\"what's on my screen\", \"read this to me\"", "The only command where Elene actually looks at the screen (a real screenshot sent to a vision model) - everything else works off on-screen text/labels, never pixels. Asks for the system screen-sharing permission each time."),
+    EleneCommandDoc("play_game / stop_game", "\"play this for me\", \"stop playing\"", "Elene repeatedly screenshots the game and taps/swipes a move, looping until told to stop. Slow, turn-based games only (word games, non-timed match-3, cards, puzzles) - each move takes a few real seconds of thinking, so this does not work for fast/reflex games. Stops immediately if you switch apps.")
 )
 
 @Composable

@@ -242,6 +242,14 @@
             android:process=":recorder"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- Elene's screen-perception capture box (describe_screen / play_game) - same
+             :recorder process isolation as ScreenRecordService above and for the same reason. -->
+        <service
+            android:name=".ScreenPerceptionService"
+            android:exported="false"
+            android:process=":recorder"
+            android:foregroundServiceType="mediaProjection" />
+
         <!-- Explicit "start recording"/"stop recording" voice memo - audio-only MediaRecorder,
              no MediaProjection involved, so none of ScreenRecordService's crash-isolation
              concerns apply; runs in the main process. -->

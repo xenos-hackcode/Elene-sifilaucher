@@ -48,6 +48,13 @@ class ScifiAccessibilityService : AccessibilityService() {
         private const val TAB_WIDTH_DP = 22
         private const val TAB_HEIGHT_DP = 64
         private const val BUBBLE_SIZE_DP = 56
+
+        // Hard safety backstop for the game auto-play loop - no server-side rate limit exists,
+        // so these are the only thing preventing a runaway loop from silently burning API
+        // credits/battery if something goes wrong or the user forgets it's running.
+        private const val MAX_GAME_LOOP_ITERATIONS = 40
+        private const val MAX_GAME_LOOP_DURATION_MS = 10 * 60_000L
+        private const val GAME_LOOP_SETTLE_MS = 600L
     }
 
     private var highlightView: View? = null
@@ -94,6 +101,21 @@ class ScifiAccessibilityService : AccessibilityService() {
                 registerReceiver(installReceiver, installFilter)
             }
         }
+        runCatching {
+            // ScreenPerceptionService lives in the isolated :recorder process (different VM),
+            // so frames can only be handed back here via broadcast, same shape as the
+            // install-watch receiver above - both same-app, same-UID, NOT_EXPORTED is correct.
+            val perceptionFilter = IntentFilter().apply {
+                addAction(ScreenPerceptionService.ACTION_FRAME_READY)
+                addAction(ScreenPerceptionService.ACTION_FRAME_ERROR)
+                addAction(ScreenPerceptionService.ACTION_PROJECTION_STOPPED)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(perceptionReceiver, perceptionFilter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(perceptionReceiver, perceptionFilter)
+            }
+        }
         registerCallStateListener()
     }
 
@@ -106,6 +128,10 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { unregisterReceiver(screenStateReceiver) }
         runCatching { unregisterReceiver(voipCallReceiver) }
         runCatching { unregisterReceiver(installReceiver) }
+        runCatching { unregisterReceiver(perceptionReceiver) }
+        if (gameLoopActive) runCatching {
+            startService(Intent(this, ScreenPerceptionService::class.java).setAction(ScreenPerceptionService.ACTION_STOP_CAPTURE))
+        }
         unregisterCallStateListener()
         bubbleServiceScope.cancel()
         if (instance === this) instance = null
@@ -343,6 +369,22 @@ class ScifiAccessibilityService : AccessibilityService() {
             if (pkg == lastForegroundPkg && !wasLocked) return
             lastForegroundPkg = pkg
             pendingVisibilityPkg = pkg
+
+            // The target app relaunched after MediaProjection consent is now actually back in
+            // front - safe to request the first frame. Only fires once per pending capture
+            // (awaitingCaptureRelaunch is consumed immediately) so later, unrelated window
+            // changes don't re-trigger it.
+            if (awaitingCaptureRelaunch && pkg == pendingCaptureTargetPkg) {
+                awaitingCaptureRelaunch = false
+                bubbleHandler.postDelayed({ requestFrame() }, 500L)
+            }
+            // Confirmed real risk, not hypothetical: a play-loop that keeps tapping into
+            // whatever app you've switched to (a call answered, Home pressed, another app
+            // opened) would be actively harmful, not just wrong. Auto-stop rides this exact
+            // event stream already driving the cross-app bubble, same debounce window.
+            if (gameLoopActive && pkg != gameLoopTargetPkg) {
+                stopGameLoop("Stopped playing - looks like you switched apps.")
+            }
         }
         bubbleHandler.removeCallbacks(visibilityRunnable)
         bubbleHandler.postDelayed(visibilityRunnable, 450L)
@@ -919,6 +961,15 @@ class ScifiAccessibilityService : AccessibilityService() {
                 startService(Intent(this, ScreenRecordService::class.java).setAction(ScreenRecordService.ACTION_STOP_AND_FINISH))
                 true
             }.getOrDefault(false)
+            // Elene has no visual perception otherwise (everything else works off the
+            // Accessibility Tree's text, never pixels - see possibilities.md section E) -
+            // these are the only two verbs that actually look at the screen.
+            "describe_screen" -> { startDescribeScreen(arg); true }
+            "play_game" -> { startGameLoop(arg); true }
+            "stop_game" -> {
+                if (gameLoopActive) stopGameLoop("Stopped playing.") else speakOut("Not currently playing.")
+                true
+            }
             // Both need MainActivity's confirm-before-send UI, so they bridge rather than
             // complete here - same pattern as search_app/schedule above.
             "reply_last_message" -> arg != null && bringHomeWithCommand("reply_last_message:$arg")
@@ -959,6 +1010,241 @@ class ScifiAccessibilityService : AccessibilityService() {
             if (i != attempts - 1) kotlinx.coroutines.delay(delayMillis)
         }
         return false
+    }
+
+    // ---- Screen perception: describe_screen / play_game ----
+    // Deliberately scoped to slow, turn-based games only (confirmed with the user) - cloud
+    // vision round-trips are realistically 1-4+ seconds per move, which rules out reflex/timed
+    // games. ScreenPerceptionService (in the isolated :recorder process) owns only the
+    // MediaProjection/ImageReader capture pipeline; everything here - deciding when to capture,
+    // calling the backend, dispatching gestures, safety caps, app-switch auto-stop - is owned
+    // by this service, since it already owns every one of those pieces for every other verb.
+
+    private var pendingCaptureTargetPkg: String? = null
+    private var pendingCaptureQuestion: String? = null
+    private var pendingCaptureIsSingle = true
+    private var awaitingCaptureRelaunch = false
+    private var pendingFrameRequestId: String? = null
+
+    private var gameLoopActive = false
+    private var gameLoopTargetPkg: String? = null
+    private var gameLoopHint: String? = null
+    private var gameLoopIterations = 0
+    private var gameLoopStartedAtMs = 0L
+    private val gameLoopRecentMoves = ArrayDeque<String>()
+
+    private val perceptionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ScreenPerceptionService.ACTION_FRAME_READY -> onFrameReady(intent)
+                ScreenPerceptionService.ACTION_FRAME_ERROR -> onCaptureFailed("Couldn't read the screen.")
+                ScreenPerceptionService.ACTION_PROJECTION_STOPPED -> onCaptureFailed("Screen sharing stopped.")
+            }
+        }
+    }
+
+    fun startDescribeScreen(question: String?) {
+        pendingCaptureTargetPkg = lastForegroundPkg
+        pendingCaptureQuestion = question
+        pendingCaptureIsSingle = true
+        if (!bringHomeWithCommand("describe_screen_capture")) {
+            speakOut("Couldn't start the screen permission prompt.")
+        }
+    }
+
+    fun startGameLoop(hint: String?) {
+        val target = lastForegroundPkg
+        if (target == null || target == packageName) {
+            speakOut("Open the game first, then ask me to play.")
+            return
+        }
+        pendingCaptureTargetPkg = target
+        pendingCaptureQuestion = null
+        pendingCaptureIsSingle = false
+        gameLoopHint = hint
+        if (!bringHomeWithCommand("play_game_capture")) {
+            speakOut("Couldn't start the screen permission prompt.")
+        }
+    }
+
+    /** Called directly by MainActivity (same process) right after the MediaProjection consent
+     * dialog is granted and ScreenPerceptionService has been started. */
+    fun onPerceptionCaptureStarted(isSingle: Boolean) {
+        pendingCaptureIsSingle = isSingle
+        val target = pendingCaptureTargetPkg
+        if (target == null || target == packageName) {
+            // Already effectively on the launcher/home - no relaunch dance needed.
+            bubbleHandler.postDelayed({ requestFrame() }, 500L)
+            return
+        }
+        awaitingCaptureRelaunch = true
+        runCatching { openAppByPackage(target) }
+        // Safety timeout in case the relaunch never actually brings the target's window back
+        // (app was killed, permission issue, etc.) - without this a failed relaunch would leave
+        // the request hanging forever with no feedback.
+        bubbleHandler.postDelayed({
+            if (awaitingCaptureRelaunch) {
+                awaitingCaptureRelaunch = false
+                onCaptureFailed("Couldn't get back to that app.")
+            }
+        }, 5000L)
+    }
+
+    /** Called directly by MainActivity when the user denies the MediaProjection consent
+     * prompt, or the launch attempt itself failed. */
+    fun onPerceptionCaptureDenied() {
+        val wasGameLoop = !pendingCaptureIsSingle
+        resetCaptureState()
+        speakOut(
+            if (wasGameLoop) "I need the screen-sharing permission to play games for you."
+            else "I need the screen-sharing permission to see your screen."
+        )
+    }
+
+    private fun requestFrame() {
+        val requestId = System.currentTimeMillis().toString()
+        pendingFrameRequestId = requestId
+        runCatching {
+            sendBroadcast(
+                Intent(ScreenPerceptionService.ACTION_REQUEST_FRAME).setPackage(packageName).putExtra("requestId", requestId)
+            )
+        }
+    }
+
+    private fun onFrameReady(intent: Intent) {
+        val requestId = intent.getStringExtra("requestId")
+        if (requestId == null || requestId != pendingFrameRequestId) return
+        pendingFrameRequestId = null
+        val path = intent.getStringExtra("path")
+        val bytes = path?.let { runCatching { java.io.File(it).readBytes() }.getOrNull() }
+        path?.let { runCatching { java.io.File(it).delete() } }
+        if (bytes == null) {
+            onCaptureFailed("Couldn't read the screen.")
+            return
+        }
+
+        if (pendingCaptureIsSingle) {
+            val question = pendingCaptureQuestion
+            resetCaptureState()
+            bubbleServiceScope.launch {
+                val description = runCatching { EleneApiClient.describeScreen(bytes, question) }.getOrNull()
+                speakOut(description ?: "I couldn't make sense of what's on screen.")
+            }
+            return
+        }
+
+        if (!gameLoopActive) {
+            gameLoopActive = true
+            gameLoopTargetPkg = pendingCaptureTargetPkg
+            gameLoopIterations = 0
+            gameLoopStartedAtMs = System.currentTimeMillis()
+            gameLoopRecentMoves.clear()
+            speakOut("Okay, I'm watching - I'll play slowly since I have to think about each move.")
+        }
+        runGameMoveDecision(
+            frameWidth = intent.getIntExtra("frameWidth", 0),
+            frameHeight = intent.getIntExtra("frameHeight", 0),
+            fullWidth = intent.getIntExtra("fullWidth", 0),
+            fullHeight = intent.getIntExtra("fullHeight", 0),
+            bytes = bytes
+        )
+    }
+
+    private fun runGameMoveDecision(frameWidth: Int, frameHeight: Int, fullWidth: Int, fullHeight: Int, bytes: ByteArray) {
+        if (!gameLoopActive) return
+        gameLoopIterations++
+        if (gameLoopIterations > MAX_GAME_LOOP_ITERATIONS) {
+            stopGameLoop("I've made a lot of moves, so I'll stop here rather than keep going forever.")
+            return
+        }
+        if (System.currentTimeMillis() - gameLoopStartedAtMs > MAX_GAME_LOOP_DURATION_MS) {
+            stopGameLoop("That's been ten minutes of playing - stopping here.")
+            return
+        }
+        bubbleServiceScope.launch {
+            val decision = runCatching { EleneApiClient.decideGameMove(bytes, gameLoopHint, gameLoopRecentMoves.toList()) }.getOrNull()
+            // The loop may have been stopped (spoken "stop", app switch, safety cap) while this
+            // call was in flight - let the current iteration finish, but don't act on a stale
+            // decision for a loop that's no longer running.
+            if (!gameLoopActive) return@launch
+            if (decision == null) {
+                stopGameLoop("Lost the connection while deciding a move - stopping.")
+                return@launch
+            }
+            applyGameMove(decision, frameWidth, frameHeight, fullWidth, fullHeight)
+        }
+    }
+
+    private fun applyGameMove(decision: GameMoveDecision, frameWidth: Int, frameHeight: Int, fullWidth: Int, fullHeight: Int) {
+        if (!gameLoopActive) return
+        if (decision.gameOver || decision.action == "give_up") {
+            stopGameLoop(if (decision.gameOver) "Looks like the game's over." else "I'm not sure what to do next, so I'll stop here.")
+            return
+        }
+        // Model's coordinates are in the downscaled frame's space, not full-screen pixels -
+        // must be scaled back up by the known ratio before dispatching, or every tap silently
+        // lands in the wrong spot with no error signal.
+        val scaleX = if (frameWidth > 0) fullWidth.toFloat() / frameWidth else 1f
+        val scaleY = if (frameHeight > 0) fullHeight.toFloat() / frameHeight else 1f
+        when (decision.action) {
+            "tap" -> {
+                val x = decision.x
+                val y = decision.y
+                if (x != null && y != null) tapAt((x * scaleX).toInt(), (y * scaleY).toInt())
+            }
+            "swipe" -> {
+                val x1 = decision.x
+                val y1 = decision.y
+                val x2 = decision.x2
+                val y2 = decision.y2
+                if (x1 != null && y1 != null && x2 != null && y2 != null) {
+                    swipeCoords((x1 * scaleX).toInt(), (y1 * scaleY).toInt(), (x2 * scaleX).toInt(), (y2 * scaleY).toInt())
+                }
+            }
+            // "wait" - deliberate no-op, just re-observe next cycle.
+        }
+        gameLoopRecentMoves.addLast("${decision.action}: ${decision.reasoning}".take(80))
+        while (gameLoopRecentMoves.size > 5) gameLoopRecentMoves.removeFirst()
+
+        bubbleHandler.postDelayed({
+            if (gameLoopActive) requestFrame()
+        }, GAME_LOOP_SETTLE_MS)
+    }
+
+    fun isGameLoopActive(): Boolean = gameLoopActive
+
+    fun stopGameLoop(reason: String) {
+        if (!gameLoopActive) return
+        gameLoopActive = false
+        gameLoopTargetPkg = null
+        pendingFrameRequestId = null
+        runCatching {
+            startService(Intent(this, ScreenPerceptionService::class.java).setAction(ScreenPerceptionService.ACTION_STOP_CAPTURE))
+        }
+        speakOut(reason)
+    }
+
+    private fun onCaptureFailed(message: String) {
+        pendingFrameRequestId = null
+        if (gameLoopActive) {
+            stopGameLoop(message)
+        } else {
+            resetCaptureState()
+            speakOut(message)
+        }
+    }
+
+    private fun resetCaptureState() {
+        pendingCaptureTargetPkg = null
+        pendingCaptureQuestion = null
+        pendingCaptureIsSingle = true
+        awaitingCaptureRelaunch = false
+    }
+
+    private fun openAppByPackage(pkg: String): Boolean {
+        val launchIntent = packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return runCatching { startActivity(launchIntent); true }.getOrDefault(false)
     }
 
     @Suppress("DEPRECATION")
@@ -1020,6 +1306,27 @@ class ScifiAccessibilityService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 250))
             .build()
         dispatchGesture(gesture, null, null)
+    }
+
+    /** Coordinate-based tap, unlike clickByText - needed for games (Unity/OpenGL/Canvas
+     * rendering) that expose no Accessibility node tree at all to match text against. */
+    fun tapAt(x: Int, y: Int): Boolean {
+        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
+    fun swipeCoords(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 250): Boolean {
+        val path = Path().apply {
+            moveTo(x1.toFloat(), y1.toFloat())
+            lineTo(x2.toFloat(), y2.toFloat())
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+            .build()
+        return dispatchGesture(gesture, null, null)
     }
 
     // ---- Screen understanding: describe / click / highlight ----
