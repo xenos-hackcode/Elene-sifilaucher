@@ -1,9 +1,12 @@
 package com.example.scifilauncher
 
 import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
+import kotlinx.coroutines.suspendCancellableCoroutine
 import rikka.shizuku.Shizuku
 
 /** Shizuku lets this app run commands with real shell (ADB) privilege - the same access level
@@ -73,21 +76,76 @@ object ShizukuManager {
             }
     }
 
+    // ---- Sandbox verification gate (SandboxVerificationService, android:isolatedProcess="true") ----
+    // A genuinely separate, permission-stripped UID checks the shape of every command before
+    // ShizukuUserService.exec() - which had zero validation of its own - is ever allowed to
+    // actually run it. Fails closed: an unreachable sandbox is treated as a rejection, not
+    // silently skipped.
+    @Volatile private var sandboxVerification: ISandboxVerification? = null
+    private val sandboxConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            sandboxVerification = ISandboxVerification.Stub.asInterface(binder)
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            sandboxVerification = null
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun verifyWithSandbox(context: Context, command: Array<out String>): SandboxVerdict {
+        val existing = sandboxVerification
+        if (existing != null) {
+            return runCatching { existing.verifyShellCommand(command) }
+                .getOrElse { SandboxVerdict(false, "Sandbox call failed: ${it.message}") }
+        }
+        return suspendCancellableCoroutine { cont ->
+            val bindConnection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                    val service = ISandboxVerification.Stub.asInterface(binder)
+                    sandboxVerification = service
+                    val verdict = runCatching { service.verifyShellCommand(command) }
+                        .getOrElse { SandboxVerdict(false, "Sandbox call failed: ${it.message}") }
+                    if (cont.isActive) cont.resume(verdict) {}
+                }
+                override fun onServiceDisconnected(name: ComponentName) {
+                    sandboxVerification = null
+                }
+            }
+            val bound = runCatching {
+                context.applicationContext.bindService(
+                    Intent(context.applicationContext, SandboxVerificationService::class.java),
+                    bindConnection,
+                    Context.BIND_AUTO_CREATE
+                )
+            }.getOrDefault(false)
+            if (!bound && cont.isActive) cont.resume(SandboxVerdict(false, "Couldn't bind sandbox verification service")) {}
+        }
+    }
+
     /** Runs a shell command with Shizuku's shell-level privilege, returning combined
      * stdout+stderr. Callers should check hasPermission() first for a clean "not set up"
      * message - this just fails if the user service isn't bound yet (normally instant once
-     * permission is granted, since ensureUserServiceBound() is called right after that). */
-    private fun runShellCommand(vararg command: String): Result<String> {
+     * permission is granted, since ensureUserServiceBound() is called right after that). Every
+     * command is checked by the sandbox first - see verifyWithSandbox above. */
+    private suspend fun runShellCommand(context: Context, vararg command: String): Result<String> {
         ensureUserServiceBound()
         val service = userService ?: return Result.failure(IllegalStateException("Shizuku user service not connected yet - try again"))
+        val verdict = verifyWithSandbox(context, command)
+        SystemEventLog.record(
+            context, "Sandbox",
+            "verifyShellCommand(${command.joinToString(" ")}) -> passed=${verdict.passed} (${verdict.reason})"
+        )
+        if (!verdict.passed) {
+            return Result.failure(SecurityException("Sandbox rejected command: ${verdict.reason}"))
+        }
         return runCatching { service.exec(command) }
     }
 
     /** Genuine force-stop, equivalent to `adb shell am force-stop <package>` - not the lighter
      * killBackgroundProcesses() fallback used when Shizuku isn't set up, this actually matches
      * what Settings > App Info > Force Stop does. */
-    fun forceStopPackage(packageName: String): Result<Unit> {
+    suspend fun forceStopPackage(context: Context, packageName: String): Result<Unit> {
         if (!hasPermission()) return Result.failure(IllegalStateException("Shizuku permission not granted"))
-        return runShellCommand("am", "force-stop", packageName).map { }
+        return runShellCommand(context, "am", "force-stop", packageName).map { }
     }
 }

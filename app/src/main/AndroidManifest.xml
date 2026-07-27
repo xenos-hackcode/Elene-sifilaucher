@@ -250,6 +250,16 @@
             android:process=":recorder"
             android:foregroundServiceType="mediaProjection" />
 
+        <!-- Real privilege isolation, not just crash isolation like :recorder above -
+             isolatedProcess="true" gives this a genuinely separate, permission-stripped UID
+             with no filesystem/network access of its own. Verifies Shizuku shell commands
+             before ShizukuManager ever actually executes them. -->
+        <service
+            android:name=".SandboxVerificationService"
+            android:exported="false"
+            android:process=":sandbox"
+            android:isolatedProcess="true" />
+
         <!-- Explicit "start recording"/"stop recording" voice memo - audio-only MediaRecorder,
              no MediaProjection involved, so none of ScreenRecordService's crash-isolation
              concerns apply; runs in the main process. -->

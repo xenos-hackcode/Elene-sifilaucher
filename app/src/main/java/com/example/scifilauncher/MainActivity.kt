@@ -1614,9 +1614,11 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             when {
                                 pkg == null -> speak("Negative. I couldn't find an app matching \"$arg\".")
                                 ShizukuManager.hasPermission() -> {
-                                    val result = ShizukuManager.forceStopPackage(pkg)
-                                    if (result.isSuccess) speak("Force-stopped $arg.")
-                                    else speak("Negative. The force-stop command failed.")
+                                    scope.launch {
+                                        val result = ShizukuManager.forceStopPackage(contextAndroid, pkg)
+                                        if (result.isSuccess) speak("Force-stopped $arg.")
+                                        else speak("Negative. The force-stop command failed.")
+                                    }
                                 }
                                 else -> {
                                     val am = contextAndroid.getSystemService(ACTIVITY_SERVICE) as? android.app.ActivityManager

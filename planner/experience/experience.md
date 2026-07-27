@@ -163,6 +163,22 @@
   from the screen itself with a real fingerprint scan. Deliberately Stage 1 only - no
   code-generation/build/deploy pipeline exists yet behind an APPROVED entry.
 
+- (2026-07-27) Sandbox (isolated-process verification for Shizuku shell commands) built per the
+  plan in declarative-toasting-glacier.md, after evaluating a pasted technical document: kept its
+  genuinely real insight (`android:isolatedProcess="true"` is a real permission-stripped-UID
+  mechanism, stronger than the existing `:recorder` crash-only isolation), declined its two
+  unrealistic/inappropriate parts (an on-device compiler for semantic code analysis - not
+  achievable on a phone; and a "Tier 3 - Owned Network" consent tier that re-authorized packet
+  injection/ARP spoofing, already rated 5/hard-no in declined.md earlier this project - that
+  verdict doesn't change on relabeling). Confirmed via real evidence, not assumed: builds clean,
+  installs with no crash, and `aapt dump xmltree` on the actual built APK confirms
+  `isolatedProcess=true`/`process=":sandbox"`/`exported=false` all compiled through correctly
+  into the manifest binary. **Not yet confirmed**: the actual live gate working end-to-end (a
+  real force-stop command being verified and passed/rejected by the isolated service) - Shizuku's
+  own service needs its "Start" tapped again after this reinstall (a known, already-documented
+  requirement) before that path can even be exercised, and the actual round trip needs a real
+  triggered command while watching logcat, not a headless simulation.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

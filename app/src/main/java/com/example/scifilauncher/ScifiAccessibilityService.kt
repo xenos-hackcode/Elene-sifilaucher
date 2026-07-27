@@ -873,7 +873,7 @@ class ScifiAccessibilityService : AccessibilityService() {
                 val pkg = AppResolver.resolvePackageName(this, arg)
                 when {
                     pkg == null -> false
-                    ShizukuManager.hasPermission() -> ShizukuManager.forceStopPackage(pkg).isSuccess
+                    ShizukuManager.hasPermission() -> ShizukuManager.forceStopPackage(this@ScifiAccessibilityService, pkg).isSuccess
                     else -> {
                         val am = getSystemService(ACTIVITY_SERVICE) as? android.app.ActivityManager
                         runCatching { am?.killBackgroundProcesses(pkg) }
