@@ -207,6 +207,32 @@
   genuinely locked, confirming the keyguard actually gets bypassed just for that automated send
   and is fully restored afterward.
 
+- (2026-07-27) Batch of four smaller features built together: (1) traffic proxy routing -
+  TrackerBlockVpnService now reads an optional "ip:port" from Security > Network Protection and
+  routes traffic through it via VpnService.Builder.setHttpProxy() (real Android API, API 29+) -
+  deliberately does NOT reimplement packet reading/blocking/editing itself, since mitmproxy/Burp
+  Suite (run by the user on their own laptop) already do that far better; this app's only job is
+  routing. (2) Keep-screen-on while actively talking to Elene - both the cross-app overlay bubble
+  (FLAG_KEEP_SCREEN_ON on its WindowManager.LayoutParams, toggled in setBubbleState) and the home
+  screen's own bubble (a LaunchedEffect on bubbleState toggling the Activity window's flag) -
+  cleared the instant either goes back to dormant, not a standing keep-awake. (3) Real research
+  (not guessed) on offline/on-device LLM feasibility for this exact phone (Galaxy A54, Exynos
+  1380, no real NPU) - conclusion: a full on-device LLM is technically possible but not advisable
+  (2-5 tok/s realistic, real thermal throttling on repeated use in comparable-tier benchmarks),
+  Gemini Nano/AICore is a hard no (requires 12GB+ RAM and a 2025-2026 flagship SoC), and the
+  actually-correct approach for this app's narrow ~40-verb command set is a lightweight offline
+  intent classifier (on-device SpeechRecognizer + fuzzy/embedding matching against known verbs),
+  not a scaled-down LLM - logged for a future properly-scoped offline-fallback pass, nothing
+  built yet. (4) Memory feature - RememberedFactLog (durable fact store, separate from the
+  existing avoid_topics denylist) + MemoryScreen (Settings > Memory) + a new "remember_fact" verb
+  + a remembered_facts context field fed back to the backend every turn specifically because the
+  backend's own conversation history is only in-memory and resets on Cloud Run recycle - this is
+  the durable fallback for that real, already-known limitation. Backend redeployed (revision
+  elene-backend-00027-szt). All four: builds clean, installs with no crash. **Not yet confirmed
+  live**: the proxy actually routing real traffic to a running mitmproxy/Burp instance, the
+  keep-screen-on actually holding through a real conversation, and remember_fact/remembered_facts
+  actually surviving a real backend memory reset in practice.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

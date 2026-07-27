@@ -56,6 +56,8 @@ fun SecurityScreen(
     trackerBlockingActive: Boolean,
     onToggleTrackerBlocking: (Boolean) -> Unit,
     onOpenRouterSettings: () -> Unit,
+    proxyAddress: String,
+    onProxyAddressChange: (String) -> Unit,
     cedalSharedSystemEnabled: Boolean,
     onToggleCedalSharedSystem: (Boolean) -> Unit,
     kioskModeEnabled: Boolean,
@@ -223,9 +225,57 @@ fun SecurityScreen(
                     label = "Router",
                     themeColor = themeColor,
                     value = "Sky",
-                    showDivider = false,
                     onClick = onOpenRouterSettings
                 )
+                var showProxyDialog by remember { mutableStateOf(false) }
+                var proxyInput by remember(proxyAddress) { mutableStateOf(proxyAddress) }
+                PanelRow(
+                    label = "Traffic proxy",
+                    themeColor = themeColor,
+                    value = proxyAddress.ifBlank { "Not set" },
+                    showDivider = false,
+                    onInfoClick = { showProxyDialog = true },
+                    onClick = { showProxyDialog = true }
+                )
+                if (showProxyDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showProxyDialog = false },
+                        title = { Text("Traffic proxy", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column {
+                                Text(
+                                    "Point this phone's traffic (tracker/ad blocking still applies first) at " +
+                                        "a real intercepting proxy - mitmproxy or Burp Suite - running on your " +
+                                        "own laptop on the same network. This app doesn't read, block, or edit " +
+                                        "traffic content itself beyond the domain blocklist above - the proxy " +
+                                        "does that, since it's already built and trusted for exactly this. " +
+                                        "Leave blank to turn this off. Takes effect next time tracker & ad " +
+                                        "blocking is turned on.",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(bottom = 12.dp)
+                                )
+                                OutlinedTextField(
+                                    value = proxyInput,
+                                    onValueChange = { proxyInput = it },
+                                    label = { Text("ip:port", fontFamily = FontFamily.Monospace) },
+                                    singleLine = true
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                onProxyAddressChange(proxyInput.trim())
+                                showProxyDialog = false
+                            }) { Text("SAVE", color = themeColor, fontFamily = FontFamily.Monospace) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showProxyDialog = false }) {
+                                Text("CANCEL", color = themeColor, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+                    )
+                }
             }
 
             PanelSection(title = "CEDAL SHARED SYSTEM", themeColor = themeColor) {

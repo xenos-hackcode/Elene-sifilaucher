@@ -1020,6 +1020,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
                 val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
                 var trackerBlockingEnabled by remember { mutableStateOf(TrackerBlockVpnService.isRunning) }
+                var proxyAddressState by remember { mutableStateOf(lockPrefs.getString("traffic_proxy_address", "").orEmpty()) }
                 var cedalSharedSystemEnabled by remember {
                     mutableStateOf(CedalSharedSystem.isEnabled(CedalSharedSystem.prefs(this@MainActivity)))
                 }
@@ -1049,6 +1050,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var laptopTokenState by rememberSaveable { mutableStateOf(loadLaptopToken()) }
                 var showInstallFlags by rememberSaveable { mutableStateOf(false) }
                 var showCapabilities by rememberSaveable { mutableStateOf(false) }
+                var showMemory by rememberSaveable { mutableStateOf(false) }
                 var showLocationHistory by rememberSaveable { mutableStateOf(false) }
                 var appsSearchQuery by rememberSaveable { mutableStateOf("") }
                 var showScreenRecordSetup by rememberSaveable { mutableStateOf(false) }
@@ -1222,6 +1224,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var bubbleX by rememberSaveable { mutableStateOf(40f) }
                 var bubbleY by rememberSaveable { mutableStateOf(200f) }
                 var bubbleState by remember { mutableStateOf(EleneBubbleState.DORMANT) }
+                // Screen shouldn't dim/lock while actively talking to Elene from the home
+                // screen - held only while genuinely listening/replying, cleared the instant
+                // she goes back to dormant, not a standing keep-awake. Single effect reacting
+                // to bubbleState rather than touching every place it's set.
+                LaunchedEffect(bubbleState) {
+                    if (bubbleState == EleneBubbleState.DORMANT) {
+                        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
                 var isEleneChatVisible by rememberSaveable { mutableStateOf(false) }
                 var eleneText by remember { mutableStateOf(TextFieldValue("")) }
                 var eleneReply by remember { mutableStateOf<String?>(null) }
@@ -1720,6 +1733,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         "forget_avoid" -> arg?.let {
                             removeAvoidTopic(getSharedPreferences("elene_memory_prefs", MODE_PRIVATE), it)
                         }
+                        "remember_fact" -> arg?.let { RememberedFactLog.record(this@MainActivity, it) }
                         else -> {}
                     }
                 }
@@ -1794,6 +1808,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             put("is_dark", isDark)
                             if (!screenText.isNullOrBlank()) put("screen_text", screenText)
                             if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
+                            val rememberedFacts = RememberedFactLog.asContextString(this@MainActivity)
+                            if (rememberedFacts.isNotBlank()) put("remembered_facts", rememberedFacts)
                             if (lastMsg != null) {
                                 put("last_message_sender", lastMsg.title)
                                 put("last_message_app", lastMsg.appName)
@@ -2089,6 +2105,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSettings = false
                                     showCapabilities = true
                                 },
+                                onOpenMemory = {
+                                    showSettings = false
+                                    showMemory = true
+                                },
                                 onDarkModeChange = { mode ->
                                     // SettingsScreen keeps its own local copy for its own
                                     // recomposition, but the M3 theme (AlertDialog colors,
@@ -2109,6 +2129,27 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onBack = {
                                     showCapabilities = false
                                     showSettings = true
+                                }
+                            )
+                        }
+
+                        showMemory -> {
+                            // No confirmation step in between (unlike Requests/Updates, whose
+                            // own state changes happen to force a recompose) - forgetting an
+                            // entry here needs its own explicit trigger or the list would show
+                            // stale data until something unrelated recomposes.
+                            var memoryVersion by remember { mutableStateOf(0) }
+                            MemoryScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                entries = remember(memoryVersion) { RememberedFactLog.loadAll(this@MainActivity) },
+                                onBack = {
+                                    showMemory = false
+                                    showSettings = true
+                                },
+                                onForget = { entry ->
+                                    RememberedFactLog.forget(this@MainActivity, entry.id)
+                                    memoryVersion++
                                 }
                             )
                         }
@@ -2276,6 +2317,11 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 },
                                 onOpenRouterSettings = {
                                     openUrlInPreferredBrowser(this@MainActivity, "https://myrouter.io")
+                                },
+                                proxyAddress = proxyAddressState,
+                                onProxyAddressChange = { address ->
+                                    proxyAddressState = address
+                                    lockPrefs.edit().putString("traffic_proxy_address", address).apply()
                                 },
                                 cedalSharedSystemEnabled = cedalSharedSystemEnabled,
                                 onToggleCedalSharedSystem = { enabled ->

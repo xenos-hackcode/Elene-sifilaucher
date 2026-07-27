@@ -452,10 +452,15 @@ class ScifiAccessibilityService : AccessibilityService() {
             if (willBeIdle) {
                 params.width = (TAB_WIDTH_DP * density).toInt()
                 params.height = (TAB_HEIGHT_DP * density).toInt()
+                params.flags = params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
             } else {
                 val size = (BUBBLE_SIZE_DP * density).toInt()
                 params.width = size
                 params.height = size
+                // Screen shouldn't dim/lock while actively talking to Elene - held only for as
+                // long as this overlay is genuinely listening/replying, cleared the instant it
+                // goes back to dormant above, not a standing keep-awake.
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             }
             runCatching { wm.updateViewLayout(view, params) }
         }
@@ -659,6 +664,8 @@ class ScifiAccessibilityService : AccessibilityService() {
             val ctxMap = buildMap {
                 if (screenText.isNotBlank()) put("screen_text", screenText)
                 if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
+                val rememberedFacts = RememberedFactLog.asContextString(this@ScifiAccessibilityService)
+                if (rememberedFacts.isNotBlank()) put("remembered_facts", rememberedFacts)
                 if (installedApps.isNotEmpty()) put("installed_apps", installedApps.joinToString(", ") { it.label }.take(1500))
                 if (recentlyOpened.isNotEmpty()) put("recently_opened_apps", recentlyOpened.joinToString(", "))
                 // So Elene can honestly answer "do you recognize my voice" instead of denying a
@@ -975,6 +982,10 @@ class ScifiAccessibilityService : AccessibilityService() {
             "forget_avoid" -> arg?.let {
                 removeAvoidTopic(getSharedPreferences("elene_memory_prefs", MODE_PRIVATE), it); true
             } ?: false
+            // Durable fallback for the backend's own conversation memory, which is only
+            // in-memory and resets whenever the Cloud Run instance recycles - fed back into
+            // ctxMap below on every turn so Elene can recall it even after that reset.
+            "remember_fact" -> arg?.let { RememberedFactLog.record(this@ScifiAccessibilityService, it); true } ?: false
             "start_screen_recording" -> bringHomeToStartRecording()
             "stop_screen_recording" -> runCatching {
                 startService(Intent(this, ScreenRecordService::class.java).setAction(ScreenRecordService.ACTION_STOP_AND_FINISH))

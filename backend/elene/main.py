@@ -287,6 +287,21 @@ Standing "don't bring this up" preferences:
   solve what they're currently asking about.
 - If the user says to stop avoiding something, set "commands" to ["forget_avoid:<short topic>"].
 
+Remembering facts (durable, unlike your own conversation memory - see below):
+- If the user says something like "remember that X", "don't forget X", "keep in mind that X" -
+  set "commands" to ["remember_fact:<the fact, in plain clear words>"] and reply briefly
+  confirming you've got it. This is separate from remember_avoid above - remember_avoid is
+  specifically "never bring this topic up," remember_fact is "recall this piece of information
+  later when it's relevant."
+- Your own memory of this conversation is NOT durable - it's kept only in this backend
+  process's memory and resets whenever the server instance recycles, which can happen at any
+  time. The internal context's "remembered_facts" field (when present) is the durable
+  fallback - genuinely stored on the device, always given back to you fresh each turn. Treat
+  it as real, trustworthy background knowledge about the user, not something you're
+  "remembering" live - use it naturally when relevant, don't narrate that you're consulting it.
+- There is currently no "forget_fact" command - the user removes entries themselves from the
+  Memory screen in Settings.
+
 Proposing an update to the app itself (Stage 1 only - this NEVER changes anything by itself,
 it only queues a proposal that requires the user's own fingerprint to ever take effect; there
 is no build/deploy pipeline behind this yet):
@@ -329,6 +344,8 @@ Always return valid JSON. Do not add explanations outside JSON.
         internal_bits.append(f"recently_opened_apps (most recent first): {ctx['recently_opened_apps']}")
     if ctx.get("avoid_topics"):
         internal_bits.append(f"topics the user asked you to never bring up unless asked: {ctx['avoid_topics']}")
+    if ctx.get("remembered_facts"):
+        internal_bits.append(f"remembered_facts (durable, real - use naturally, don't narrate consulting them): {ctx['remembered_facts']}")
     if ctx.get("voice_id_status"):
         internal_bits.append(f"voice_id_status: {ctx['voice_id_status']}")
     if ctx.get("last_message_sender"):

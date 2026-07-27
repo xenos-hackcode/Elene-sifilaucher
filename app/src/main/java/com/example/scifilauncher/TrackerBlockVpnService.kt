@@ -82,6 +82,26 @@ class TrackerBlockVpnService : VpnService() {
         return blockedDomains.any { d.endsWith(".$it") }
     }
 
+    /** Reads the "IP:port" the user typed into Security > Network Protection, if any - a real
+     * intercepting proxy (mitmproxy/Burp Suite) the user runs themselves on their own laptop,
+     * same network as the phone. This app never reads, blocks, or edits traffic content itself
+     * beyond the existing DNS sinkhole above - all of that (reading/blocking/editing what
+     * actually flows through) is mitmproxy/Burp's job, tools already built and trusted for
+     * exactly this; this VPN's only role is routing the phone's traffic to them. */
+    private fun configuredProxy(): android.net.ProxyInfo? {
+        val raw = getSharedPreferences("lock_prefs", MODE_PRIVATE).getString("traffic_proxy_address", null)
+            ?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        val parts = raw.split(":")
+        val host = parts.getOrNull(0)?.trim().orEmpty()
+        val port = parts.getOrNull(1)?.trim()?.toIntOrNull()
+        if (host.isEmpty() || port == null) {
+            Log.w(TAG, "Ignoring malformed proxy address \"$raw\" - expected ip:port")
+            return null
+        }
+        return android.net.ProxyInfo.buildDirectProxy(host, port)
+    }
+
     private fun startVpn() {
         Log.d(TAG, "startVpn() called, blocklist size=${blockedDomains.size}")
         if (vpnInterface != null) {
@@ -89,12 +109,22 @@ class TrackerBlockVpnService : VpnService() {
             return
         }
 
+        val proxy = configuredProxy()
         val builder = Builder()
             .setSession("SciFi Tracker Block")
             .addAddress("10.0.0.2", 32)
             .addDnsServer("10.0.0.1")
             .addRoute("10.0.0.1", 32)
             .setMtu(1500)
+        // A configured proxy needs the VPN to actually carry all traffic (not just the DNS-only
+        // routing above) so there's something for the proxy to see - the DNS sinkhole's own
+        // domain blocking still runs first either way.
+        if (proxy != null) {
+            builder.addRoute("0.0.0.0", 0)
+            runCatching { builder.setHttpProxy(proxy) }
+                .onFailure { Log.e(TAG, "setHttpProxy failed for $proxy", it) }
+            Log.i(TAG, "Routing traffic through proxy $proxy")
+        }
 
         vpnInterface = runCatching { builder.establish() }
             .onFailure { Log.e(TAG, "builder.establish() threw", it) }

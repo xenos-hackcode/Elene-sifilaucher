@@ -37,6 +37,7 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     onOpenMoreApps: () -> Unit,
     onOpenCapabilities: () -> Unit,
+    onOpenMemory: () -> Unit,
     onDarkModeChange: (DarkModeOption) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -215,6 +216,15 @@ fun SettingsScreen(
                         themeColor = themeColor,
                         showDivider = false,
                         onClick = onOpenCapabilities
+                    )
+                }
+
+                PanelSection(title = "MEMORY", themeColor = themeColor) {
+                    PanelRow(
+                        label = "What Elene remembers",
+                        themeColor = themeColor,
+                        showDivider = false,
+                        onClick = onOpenMemory
                     )
                 }
 
