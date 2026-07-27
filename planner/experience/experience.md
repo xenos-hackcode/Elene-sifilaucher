@@ -47,7 +47,11 @@
   event, the ringing-announcement with a real incoming call, whether `acceptRingingCall()`
   actually answers on this Samsung device (the one genuinely unknown piece per the plan), and
   voice-memo playback. None of this should be treated as done until each of those has a real,
-  observed result - same standing rule as below.
+  observed result - same standing rule as below. Backend deployed to Cloud Run (revision
+  elene-backend-00022-nvv, 2026-07-27) and smoke-tested with a real HTTP request - responds
+  correctly. The new verbs/context fields are now actually live and reachable from the device,
+  not just written - but still unconfirmed end-to-end (a real "reply to my last message" etc.
+  hasn't been tried against the deployed backend yet).
 
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
