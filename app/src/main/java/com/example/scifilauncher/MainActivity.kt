@@ -349,8 +349,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             add(android.Manifest.permission.CAMERA)
             add(android.Manifest.permission.READ_CONTACTS)
             add(android.Manifest.permission.SEND_SMS)
+            add(android.Manifest.permission.READ_CALENDAR)
+            add(android.Manifest.permission.READ_PHONE_STATE)
+            add(android.Manifest.permission.READ_CALL_LOG)
             add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                add(android.Manifest.permission.ANSWER_PHONE_CALLS)
+            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 add(android.Manifest.permission.BLUETOOTH_CONNECT)
                 add(android.Manifest.permission.BLUETOOTH_SCAN)
@@ -1066,6 +1072,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var pendingConfirmationScheduleType by remember { mutableStateOf<String?>(null) }
                 var pendingConfirmationScheduleTarget by remember { mutableStateOf<String?>(null) }
 
+                // Message drafts (reply to last message / compose to any contact) - not a
+                // device-owner action, so no fingerprint, no ActionLog entry, just a plain
+                // review-before-send step. "direct_reply" channel means pendingMessageTarget is
+                // a replyableMap key (XenosNotificationListener.sendDirectReply); "whatsapp"/
+                // "sms" mean it's a phone number (sendWhatsAppAlert/sendSmsAlert).
+                var showMessageDraftConfirm by remember { mutableStateOf(false) }
+                var pendingMessageDraftText by remember { mutableStateOf("") }
+                var pendingMessageChannel by remember { mutableStateOf("") }
+                var pendingMessageTarget by remember { mutableStateOf("") }
+                var pendingMessageRecipientLabel by remember { mutableStateOf("") }
+
                 fun requestDeviceActionConfirmation(
                     actionLabel: String,
                     reason: String,
@@ -1288,6 +1305,83 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 "Found it - showing results for \"$arg\"."
                             } else {
                                 "I don't see anything matching \"$arg\" installed on this phone."
+                            }
+                        }
+                        // Draft-then-confirm messaging: never sends anything by itself - both
+                        // branches only ever stage a MessageDraftConfirmationPanel; the actual
+                        // send happens on that panel's SEND button, nowhere else.
+                        "reply_last_message" -> if (arg != null) {
+                            val lastMsg = XenosNotificationListener.lastMessageInfo
+                            if (lastMsg == null) {
+                                commandReplyOverride = "There's no recent message to reply to."
+                            } else {
+                                val replyable = XenosNotificationListener.replyableMap.values.firstOrNull {
+                                    it.title == lastMsg.title && it.appName == lastMsg.appName
+                                }
+                                if (replyable != null) {
+                                    pendingMessageChannel = "direct_reply"
+                                    pendingMessageTarget = replyable.key
+                                    pendingMessageRecipientLabel = lastMsg.title
+                                    pendingMessageDraftText = arg
+                                    showMessageDraftConfirm = true
+                                } else {
+                                    val matches = findContactsByName(this@MainActivity, lastMsg.title)
+                                    if (matches.size == 1) {
+                                        pendingMessageChannel = "whatsapp"
+                                        pendingMessageTarget = matches[0].phoneNumber
+                                        pendingMessageRecipientLabel = matches[0].displayName
+                                        pendingMessageDraftText = arg
+                                        showMessageDraftConfirm = true
+                                    } else {
+                                        commandReplyOverride = "That message isn't available to reply to directly anymore."
+                                    }
+                                }
+                            }
+                        }
+                        "send_message" -> if (arg != null) {
+                            val parts = arg.split(":", limit = 3)
+                            val contactQuery = parts.getOrNull(0)
+                            val channel = parts.getOrNull(1)?.lowercase()
+                            val text = parts.getOrNull(2)
+                            when {
+                                contactQuery == null || channel == null || text == null ->
+                                    commandReplyOverride = "I need a contact, a channel, and a message to send that."
+                                else -> {
+                                    val matches = findContactsByName(this@MainActivity, contactQuery)
+                                    when {
+                                        matches.isEmpty() ->
+                                            commandReplyOverride = "I couldn't find a contact matching \"$contactQuery\"."
+                                        matches.size > 1 ->
+                                            commandReplyOverride = "I found more than one \"$contactQuery\": ${matches.joinToString(", ") { it.displayName }}. Which one did you mean?"
+                                        else -> {
+                                            pendingMessageChannel = if (channel.contains("sms")) "sms" else "whatsapp"
+                                            pendingMessageTarget = matches[0].phoneNumber
+                                            pendingMessageRecipientLabel = matches[0].displayName
+                                            pendingMessageDraftText = text
+                                            showMessageDraftConfirm = true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "answer_call" -> {
+                            val answered = attemptAnswerCall(this@MainActivity)
+                            commandReplyOverride = if (answered) "Answering." else "I couldn't answer that one - you'll need to tap it yourself."
+                        }
+                        "start_recording" -> {
+                            commandReplyOverride = if (VoiceMemoService.isRecording) {
+                                "Already recording."
+                            } else {
+                                VoiceMemoService.start(this@MainActivity)
+                                "Recording started."
+                            }
+                        }
+                        "stop_recording" -> {
+                            commandReplyOverride = if (!VoiceMemoService.isRecording) {
+                                "Not currently recording."
+                            } else {
+                                VoiceMemoService.stop(this@MainActivity)
+                                "Recording saved."
                             }
                         }
                         "start_screen_recording" -> {
@@ -1568,11 +1662,22 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     scope.launch {
                         val screenText = ScifiAccessibilityService.instance?.describeScreen()
                         val avoidTopics = loadAvoidTopics(getSharedPreferences("elene_memory_prefs", MODE_PRIVATE))
+                        val lastMsg = XenosNotificationListener.lastMessageInfo
+                        val meeting = currentMeeting(this@MainActivity)
                         val ctxMap = buildMap {
                             put("battery_mode", batteryMode.name)
                             put("is_dark", isDark)
                             if (!screenText.isNullOrBlank()) put("screen_text", screenText)
                             if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
+                            if (lastMsg != null) {
+                                put("last_message_sender", lastMsg.title)
+                                put("last_message_app", lastMsg.appName)
+                                put("last_message_text", lastMsg.text)
+                            }
+                            if (meeting != null) {
+                                put("in_meeting", "true")
+                                put("current_meeting_title", meeting.title)
+                            }
                         }
                         val response = EleneApiClient.sendText(
                             userId = "launcher-user",
@@ -2486,6 +2591,35 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 snoozeConfirmation(30)
                             }
                         }
+                    }
+
+                    if (showMessageDraftConfirm) {
+                        MessageDraftConfirmationPanel(
+                            themeColor = themeColor,
+                            isDark = isDark,
+                            recipientLabel = pendingMessageRecipientLabel,
+                            channelLabel = when (pendingMessageChannel) {
+                                "direct_reply" -> "reply"
+                                "sms" -> "SMS"
+                                else -> "WhatsApp"
+                            },
+                            draftText = pendingMessageDraftText,
+                            onDraftTextChange = { pendingMessageDraftText = it },
+                            onRereadTap = { speak(pendingMessageDraftText) },
+                            onCancel = { showMessageDraftConfirm = false },
+                            onSend = {
+                                val sent = when (pendingMessageChannel) {
+                                    "direct_reply" -> XenosNotificationListener.instance?.sendDirectReply(pendingMessageTarget, pendingMessageDraftText) == true
+                                    "sms" -> sendSmsAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText)
+                                    else -> {
+                                        sendWhatsAppAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText)
+                                        true
+                                    }
+                                }
+                                speak(if (sent) "Sent." else "Couldn't send that - the app may not be available.")
+                                showMessageDraftConfirm = false
+                            }
+                        )
                     }
 
                     // Custom notification/quick-settings bar: stands in for the system shade,

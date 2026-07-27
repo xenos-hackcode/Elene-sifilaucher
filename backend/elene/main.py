@@ -177,6 +177,31 @@ Rules:
     user asks to schedule anything else, say plainly in "mode": "chat" that only downloads
     can be scheduled for later right now, rather than returning a schedule command for
     something that silently won't do anything.)
+  - "reply_last_message:<text>" (the user wants to reply to the most recent message - see
+    last_message_sender/last_message_app/last_message_text in the internal context below.
+    Two distinct cases produce this SAME command: (1) the user dictates the exact words to
+    send, e.g. "reply saying I'll be there in ten minutes" -> use their words verbatim as
+    <text>; (2) the user asks you to compose something yourself that fits the conversation,
+    e.g. "reply to it so it doesn't sound awkward" / "write something nice back" - in this
+    case YOU draft <text> yourself based on last_message_text, matching a natural, brief
+    reply in the same tone as the incoming message. Either way, the device always shows the
+    user the exact text before it ever sends anything - your job is only to produce the best
+    <text>, never to assume it was sent. If there's no last_message_sender in context, tell
+    the user in "mode": "chat" that there's no recent message to reply to.)
+  - "send_message:<contact>:<channel>:<text>" (the user wants to message someone who didn't
+    just message them - <contact> is the person's name as the user said it, <channel> is
+    "whatsapp" or "sms". If the user doesn't say which channel, ASK rather than guessing -
+    use "mode": "chat" with a clarifying question. <text> follows the same dictate-verbatim
+    vs. compose-it-yourself split as reply_last_message above. The device resolves <contact>
+    to a real phone number and always shows the user the draft before sending - if it can't
+    find that contact or finds more than one match, it will say so back to the user.)
+  - "answer_call" (the user explicitly says to answer/pick up/take the current incoming call,
+    e.g. "pick it up", "answer it", "take the call" - ONLY when a call is actually ringing
+    right now and the user just said this. Never issue this speculatively or because a call
+    was merely mentioned.)
+  - "start_recording" / "stop_recording" (an explicit voice memo, NOT screen recording - the
+    user says something like "start recording" / "record a voice note" / "stop recording".
+    Distinct from start_screen_recording/stop_screen_recording, which are about the screen.)
 - Turning the phone itself off/rebooting it is NOT possible for any app on a normal,
   non-rooted device - it's an OS-level restriction. If the user asks for that, explain this
   plainly in "mode": "chat" rather than inventing a command for it.
@@ -202,6 +227,12 @@ Rules:
   or missing means it exists as a feature but hasn't been set up yet (Security > Voice ID) - say
   that rather than claiming you can't ever do this. Never claim you are actively verifying THIS
   specific utterance yourself - the actual matching happens on-device, not something you compute.
+- The internal context may include in_meeting/current_meeting_title. This is informational
+  ONLY - you may mention it or offer a suggestion tied to it (e.g. "you're in [meeting title],
+  want me to silence notifications until it's over?"), but NEVER issue a command that silences,
+  mutes, or changes anything just because a meeting is detected. Muting only ever happens as
+  its own explicit action the user separately asks for and approves - the same rule as
+  everything else here, a meeting being in context is never itself permission to act.
 
 Internal context (very important):
 - Anything between [INTERNAL CONTEXT] and [/INTERNAL CONTEXT] is background state for you
@@ -245,6 +276,14 @@ Always return valid JSON. Do not add explanations outside JSON.
         internal_bits.append(f"topics the user asked you to never bring up unless asked: {ctx['avoid_topics']}")
     if ctx.get("voice_id_status"):
         internal_bits.append(f"voice_id_status: {ctx['voice_id_status']}")
+    if ctx.get("last_message_sender"):
+        internal_bits.append(
+            f"last_message_sender: {ctx['last_message_sender']} "
+            f"(app: {ctx.get('last_message_app', 'unknown')}) "
+            f"last_message_text: {ctx.get('last_message_text', '')}"
+        )
+    if ctx.get("in_meeting"):
+        internal_bits.append(f"in_meeting: true, current_meeting_title: {ctx.get('current_meeting_title', '')}")
 
     full_user_content = user_msg
     if internal_bits:

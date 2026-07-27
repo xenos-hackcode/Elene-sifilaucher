@@ -11,6 +11,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <!-- Since Android 10, the incoming number passed to a call-state listener is empty without
+         this too (READ_PHONE_STATE alone isn't enough) - needed for caller-ID lookup, not for
+         reading call history itself. -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -31,6 +38,7 @@
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- Lets this app prompt the system's real "ignore battery optimizations" dialog on
          behalf of a known Cedal sibling app (e.g. Cedal SMS), so it can keep running in the
@@ -226,6 +234,14 @@
             android:exported="false"
             android:process=":recorder"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- Explicit "start recording"/"stop recording" voice memo - audio-only MediaRecorder,
+             no MediaProjection involved, so none of ScreenRecordService's crash-isolation
+             concerns apply; runs in the main process. -->
+        <service
+            android:name=".VoiceMemoService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Cedal Shared System: receives sync broadcasts from verified same-signature
              Cedal sibling apps only (gated by the signature-level permission above) -->

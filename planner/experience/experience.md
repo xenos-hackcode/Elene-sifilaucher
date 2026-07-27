@@ -39,6 +39,16 @@
   from actually driving the real device through the exact sequence (lock via timeout/power button,
   not via switching apps).
 
+- (2026-07-27) Messaging assistant / calendar / call awareness / voice memo feature: built and
+  installed. Confirmed so far via adb (build, install, launch with no crash, all four new
+  permissions - READ_CALENDAR/READ_PHONE_STATE/ANSWER_PHONE_CALLS/READ_CALL_LOG - silently
+  granted, accessibility service still connected). **Not yet confirmed**: an actual message
+  reply/compose-and-send round trip with a real contact, calendar meeting-awareness with a real
+  event, the ringing-announcement with a real incoming call, whether `acceptRingingCall()`
+  actually answers on this Samsung device (the one genuinely unknown piece per the plan), and
+  voice-memo playback. None of this should be treated as done until each of those has a real,
+  observed result - same standing rule as below.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

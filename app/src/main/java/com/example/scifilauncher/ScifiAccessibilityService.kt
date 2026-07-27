@@ -68,6 +68,7 @@ class ScifiAccessibilityService : AccessibilityService() {
                 registerReceiver(screenStateReceiver, filter)
             }
         }
+        registerCallStateListener()
     }
 
     override fun onDestroy() {
@@ -77,9 +78,95 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { speechRecognizer?.destroy() }
         runCatching { bubbleTts?.shutdown() }
         runCatching { unregisterReceiver(screenStateReceiver) }
+        unregisterCallStateListener()
         bubbleServiceScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    // ---- Call awareness: announce who's calling, answer only on explicit "pick it up" ----
+    // Never auto-answers - registering this listener only ever leads to speaking an
+    // announcement; attemptAnswerCall() (CallAwareness.kt) is only ever invoked from the
+    // "answer_call" verb, which only exists because the user explicitly said so.
+    private var lastAnnouncedRingingNumber: String? = null
+    private var telephonyCallback: Any? = null // TelephonyCallback on API 31+, else null
+    @Suppress("DEPRECATION")
+    private var phoneStateListener: android.telephony.PhoneStateListener? = null
+
+    private fun onCallRinging(incomingNumber: String?) {
+        // TYPE_WINDOW_STATE_CHANGED-style event settling isn't relevant here (this isn't an
+        // accessibility event), but the underlying telephony stack can report RINGING more than
+        // once for the same call - only announce once per distinct incoming number/ring.
+        if (incomingNumber != null && incomingNumber == lastAnnouncedRingingNumber) return
+        lastAnnouncedRingingNumber = incomingNumber
+        val name = incomingNumber?.let { runCatching { reverseLookupContactName(this, it) }.getOrNull() }
+        val text = when {
+            !name.isNullOrBlank() -> "Incoming call from $name."
+            !incomingNumber.isNullOrBlank() -> "Incoming call from an unknown number."
+            else -> "Incoming call."
+        }
+        runCatching { speakOut(text) }
+    }
+
+    private fun onCallIdle() {
+        lastAnnouncedRingingNumber = null
+    }
+
+    private fun registerCallStateListener() {
+        runCatching {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_PHONE_STATE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) return
+
+            val telephonyManager = getSystemService(TELEPHONY_SERVICE) as? android.telephony.TelephonyManager ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val callback = object : android.telephony.TelephonyCallback(), android.telephony.TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        // API 31+'s TelephonyCallback.CallStateListener doesn't carry the
+                        // incoming number directly - fetched separately via CallStateUtil's
+                        // ringing-number helper is unavailable, so this path announces without
+                        // caller ID unless a richer API is added later; the pre-31 path below
+                        // does carry the number.
+                        if (state == android.telephony.TelephonyManager.CALL_STATE_RINGING) {
+                            onCallRinging(null)
+                        } else if (state == android.telephony.TelephonyManager.CALL_STATE_IDLE) {
+                            onCallIdle()
+                        }
+                    }
+                }
+                telephonyManager.registerTelephonyCallback(mainExecutor, callback)
+                telephonyCallback = callback
+            } else {
+                @Suppress("DEPRECATION")
+                val listener = object : android.telephony.PhoneStateListener() {
+                    @Deprecated("Deprecated in Java")
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        if (state == android.telephony.TelephonyManager.CALL_STATE_RINGING) {
+                            onCallRinging(phoneNumber)
+                        } else if (state == android.telephony.TelephonyManager.CALL_STATE_IDLE) {
+                            onCallIdle()
+                        }
+                    }
+                }
+                @Suppress("DEPRECATION")
+                telephonyManager.listen(listener, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
+                phoneStateListener = listener
+            }
+        }
+    }
+
+    private fun unregisterCallStateListener() {
+        runCatching {
+            val telephonyManager = getSystemService(TELEPHONY_SERVICE) as? android.telephony.TelephonyManager ?: return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (telephonyCallback as? android.telephony.TelephonyCallback)?.let { telephonyManager.unregisterTelephonyCallback(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                phoneStateListener?.let { telephonyManager.listen(it, android.telephony.PhoneStateListener.LISTEN_NONE) }
+            }
+        }
+        telephonyCallback = null
+        phoneStateListener = null
     }
 
     // Confirmed real gap (found via on-device testing, not assumed): locking the screen via
@@ -412,6 +499,15 @@ class ScifiAccessibilityService : AccessibilityService() {
                 // So Elene can honestly answer "do you recognize my voice" instead of denying a
                 // real feature it has - was previously invisible to the backend entirely.
                 put("voice_id_status", if (VoiceIdManager.isEnrolled(this@ScifiAccessibilityService)) "enrolled" else "not_enrolled")
+                XenosNotificationListener.lastMessageInfo?.let { lastMsg ->
+                    put("last_message_sender", lastMsg.title)
+                    put("last_message_app", lastMsg.appName)
+                    put("last_message_text", lastMsg.text)
+                }
+                currentMeeting(this@ScifiAccessibilityService)?.let { meeting ->
+                    put("in_meeting", "true")
+                    put("current_meeting_title", meeting.title)
+                }
             }
             val response = EleneApiClient.sendText(userId = "launcher-user", text = text, context = ctxMap)
             android.util.Log.d("EleneBubble", "Response: reply=\"${response?.reply}\" commands=${response?.commands} intent=\"${response?.intent}\"")
@@ -707,6 +803,20 @@ class ScifiAccessibilityService : AccessibilityService() {
             "start_screen_recording" -> bringHomeToStartRecording()
             "stop_screen_recording" -> runCatching {
                 startService(Intent(this, ScreenRecordService::class.java).setAction(ScreenRecordService.ACTION_STOP_AND_FINISH))
+                true
+            }.getOrDefault(false)
+            // Both need MainActivity's confirm-before-send UI, so they bridge rather than
+            // complete here - same pattern as search_app/schedule above.
+            "reply_last_message" -> arg != null && bringHomeWithCommand("reply_last_message:$arg")
+            "send_message" -> arg != null && bringHomeWithCommand("send_message:$arg")
+            // No UI needed for these - complete directly, same as open_app above.
+            "answer_call" -> { attemptAnswerCall(this@ScifiAccessibilityService); true }
+            "start_recording" -> runCatching {
+                if (!VoiceMemoService.isRecording) VoiceMemoService.start(this@ScifiAccessibilityService)
+                true
+            }.getOrDefault(false)
+            "stop_recording" -> runCatching {
+                if (VoiceMemoService.isRecording) VoiceMemoService.stop(this@ScifiAccessibilityService)
                 true
             }.getOrDefault(false)
             else -> false
