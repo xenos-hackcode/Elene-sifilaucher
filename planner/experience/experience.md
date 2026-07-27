@@ -58,6 +58,18 @@
   responding correctly. Standing instruction from the user: always redeploy the backend after a
   main.py change, don't wait to be asked each time.
 
+- (2026-07-27) Retried the install after "device offline" - fixed with `adb reconnect offline`
+  (no cable/settings change needed, just a stale adb session). Confirmed via real device query
+  (not assumed): all four new permissions (READ_CALENDAR, READ_CALL_LOG, ANSWER_PHONE_CALLS,
+  READ_PHONE_STATE) show `granted=true` under `dumpsys package`, the accessibility service shows
+  connected under `enabled_accessibility_services`, and the app launches with no FATAL/
+  AndroidRuntime in logcat. The call-screening role correctly shows *not* granted yet in
+  `dumpsys role` - expected, since `ROLE_CALL_SCREENING` requires a real user tap through the
+  Security screen's system role prompt, unlike the silently-grantable permissions. **Still not
+  confirmed**: an actual live cellular call decline through the role, or any of the message/
+  calendar/call-answer/voice-memo round trips listed as unconfirmed above - this entry only
+  confirms the install is healthy, not that the features work end to end.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

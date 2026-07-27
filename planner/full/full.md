@@ -142,7 +142,16 @@ Elene is deliberately built as one brain with two entry points. The Accessibilit
 bubble is the only place her commands are actually handled; the launcher's home screen doesn't
 duplicate that logic, it just bridges into the same dispatcher when a command needs an on-screen
 Activity (opening Settings, showing a PIN-era or biometric dialog, running the Apps-screen search,
-showing the screen-record consent prompt, or the device-action confirmation panel). The bubble
+showing the screen-record consent prompt, or the device-action confirmation panel). It's worth
+being precise about what "handles a command" actually means here: Elene has no visual perception
+of the screen — no screenshot, no OCR, no vision model. Every app-control action (the WhatsApp
+"Continue to Chat" tap-through, any future tap-this-button command) works by searching the Android
+Accessibility Tree for a matching text label, content-description, or resource-id and clicking
+that node — reading the same structured "system data" any accessibility service gets, not
+"seeing" the screen the way a person would. A button rendered as a bare icon with no accessible
+label is invisible to her, full stop, with no visual fallback underneath the text-matching to
+catch it. (See `planner/possibilities/possibilities.md` section E for the concrete failure modes
+this causes.) The bubble
 itself has four visual states — dormant (hidden), listening (white glow), replying (a red, green,
 or blue glitch glow while a reply is pending or speaking), and unresponsive (briefly black, when
 recognition or the network call failed) — and it deliberately doesn't duplicate itself on the

@@ -101,9 +101,9 @@ class ScifiAccessibilityService : AccessibilityService() {
             val callerName = intent?.getStringExtra("callerName")
             val appName = intent?.getStringExtra("appName")
             wakeScreenBriefly(this@ScifiAccessibilityService)
-            runCatching {
-                speakOut(if (!callerName.isNullOrBlank()) "Incoming call from $callerName." else "Incoming call${if (!appName.isNullOrBlank()) " on $appName" else ""}.")
-            }
+            announceIncomingCall(
+                if (!callerName.isNullOrBlank()) "Incoming call from $callerName." else "Incoming call${if (!appName.isNullOrBlank()) " on $appName" else ""}."
+            )
         }
     }
 
@@ -124,16 +124,52 @@ class ScifiAccessibilityService : AccessibilityService() {
         lastAnnouncedRingingNumber = incomingNumber
         wakeScreenBriefly(this)
         val name = incomingNumber?.let { runCatching { reverseLookupContactName(this, it) }.getOrNull() }
-        val text = when {
-            !name.isNullOrBlank() -> "Incoming call from $name."
-            !incomingNumber.isNullOrBlank() -> "Incoming call from an unknown number."
-            else -> "Incoming call."
+        announceIncomingCall(
+            when {
+                !name.isNullOrBlank() -> "Incoming call from $name."
+                !incomingNumber.isNullOrBlank() -> "Incoming call from an unknown number."
+                else -> "Incoming call."
+            }
+        )
+    }
+
+    /** Confirmed real gap (found from a user-described scenario, not assumed): if Elene is
+     * actively mid-listening when a call rings, announcing over that would fight the still-open
+     * SpeechRecognizer for the mic, and could plausibly get its own announcement audio picked up
+     * as if it were something the user said. Cleanly stops the current recognition session
+     * first - not the same as stopListening(), which sets listeningStopped permanently; this is
+     * a pause, and the announcement's own completion still loops back into normal listening
+     * afterward via retryListeningSoon(), same as any other turn ending. Also mentions if a
+     * voice memo is currently recording, since a call arriving mid-memo is easy to forget about
+     * otherwise. */
+    private fun announceIncomingCall(baseText: String) {
+        if (speechRecognizer != null) {
+            runCatching { speechRecognizer?.destroy() }
+            speechRecognizer = null
+        }
+        val text = if (VoiceMemoService.isRecording) {
+            "$baseText You're still recording a voice memo."
+        } else {
+            baseText
         }
         runCatching { speakOut(text) }
     }
 
     private fun onCallIdle() {
         lastAnnouncedRingingNumber = null
+    }
+
+    /** Confirmed real gap (found from a user-described scenario, not assumed): a voice memo's
+     * MediaRecorder and an active phone call both want AudioSource.MIC - nothing previously
+     * stopped them from overlapping if a call got answered (by the user tapping normally, not
+     * necessarily through Elene) while VoiceMemoService was running. Stops the memo the moment
+     * the call actually goes active (not just rings, since ringing alone doesn't take the mic),
+     * rather than leaving a corrupted/silent recording. */
+    private fun onCallActive() {
+        if (VoiceMemoService.isRecording) {
+            VoiceMemoService.stop(this)
+            runCatching { speakOut("Stopped your voice memo - a call just started.") }
+        }
     }
 
     private fun registerCallStateListener() {
@@ -153,6 +189,8 @@ class ScifiAccessibilityService : AccessibilityService() {
                         // does carry the number.
                         if (state == android.telephony.TelephonyManager.CALL_STATE_RINGING) {
                             onCallRinging(null)
+                        } else if (state == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK) {
+                            onCallActive()
                         } else if (state == android.telephony.TelephonyManager.CALL_STATE_IDLE) {
                             onCallIdle()
                         }
@@ -167,6 +205,8 @@ class ScifiAccessibilityService : AccessibilityService() {
                     override fun onCallStateChanged(state: Int, phoneNumber: String?) {
                         if (state == android.telephony.TelephonyManager.CALL_STATE_RINGING) {
                             onCallRinging(phoneNumber)
+                        } else if (state == android.telephony.TelephonyManager.CALL_STATE_OFFHOOK) {
+                            onCallActive()
                         } else if (state == android.telephony.TelephonyManager.CALL_STATE_IDLE) {
                             onCallIdle()
                         }
@@ -383,6 +423,19 @@ class ScifiAccessibilityService : AccessibilityService() {
     // unreachable, reply finished speaking) loops back into listening instead of closing.
     private fun startListening() {
         listeningStopped = false
+        // Confirmed real gap (found via user-reported edge case, not assumed): the bubble
+        // correctly hides itself when the keyguard is up (checkBubbleVisibilityNow), but that's
+        // a SEPARATE mechanism from this function - nothing previously stopped startListening()
+        // itself from being called and opening a live mic session while the phone is locked, as
+        // long as SOMETHING triggered it (e.g. the incoming-call announcement's own completion
+        // callback looping back into retryListeningSoon -> startListening). That's the same
+        // class of lock-screen bypass as the bubble-visibility bug already fixed once - closed
+        // here at the actual source instead of auditing every caller that could reach this.
+        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguardManager?.isKeyguardLocked == true) {
+            setBubbleState(EleneBubbleState.DORMANT)
+            return
+        }
         // Calls are still an absolute block - never grab the mic mid-call, no exceptions.
         if (isPhoneBusyWithCall(this)) {
             setBubbleState(EleneBubbleState.DORMANT)

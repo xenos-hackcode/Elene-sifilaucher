@@ -33,12 +33,24 @@ fun attemptAnswerCall(context: Context): Boolean {
     }.getOrDefault(false)
 }
 
-/** Same reliability caveats as attemptAnswerCall - TelecomManager.endCall()'s actual permission
- * requirements for a non-default-dialer app are less clearly documented than acceptRingingCall's,
- * so this is even more of an "attempt it, see what really happens" than that one. */
+/** Three distinct paths, tried in order, because "decline a call" means something different
+ * depending on what kind of call and what state it's in:
+ * 1. A ringing VoIP call - declined via its own notification's real Decline action.
+ * 2. A ringing cellular call - TelecomManager has no reject-ringing API for third-party apps at
+ *    all (confirmed, not assumed - see EleneCallScreeningService), so this is the only
+ *    legitimate path, and only works once the user has granted ROLE_CALL_SCREENING.
+ * 3. Anything else (an already-answered/active cellular call, or the screening role isn't
+ *    granted) - falls back to TelecomManager.endCall(), with the same "attempt it, see what
+ *    really happens" caveat as attemptAnswerCall - its real permission requirements for a
+ *    non-default-dialer app are less clearly documented than acceptRingingCall's. */
 fun attemptEndCall(context: Context): Boolean {
-    XenosNotificationListener.incomingVoipCall?.let { call ->
+    XenosNotificationListener.incomingVoipCall?.let {
         return XenosNotificationListener.instance?.respondToVoipCall(accept = false) == true
+    }
+    if (EleneCallScreeningService.pendingRingingCall != null) {
+        if (EleneCallScreeningService.rejectPendingCall()) return true
+        // Fall through to endCall() below only if the screening response didn't take (e.g. past
+        // its window) - worth trying rather than giving up outright.
     }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.ANSWER_PHONE_CALLS) != PackageManager.PERMISSION_GRANTED) {
@@ -50,6 +62,25 @@ fun attemptEndCall(context: Context): Boolean {
         telecomManager.endCall()
         true
     }.getOrDefault(false)
+}
+
+/** Whether this app currently holds the "Caller ID & spam" role (RoleManager.ROLE_CALL_SCREENING)
+ * - required for attemptEndCall to have any real chance of declining a ringing cellular call.
+ * Unlike the dangerous permissions elsewhere in this app, Device Owner cannot silently grant a
+ * role - it always requires the real system prompt launched via requestCallScreeningRoleIntent. */
+fun hasCallScreeningRole(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+    val roleManager = context.getSystemService(Context.ROLE_SERVICE) as? android.app.role.RoleManager ?: return false
+    return runCatching { roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_CALL_SCREENING) }.getOrDefault(false)
+}
+
+/** The real system intent that shows the user the actual role-grant prompt - must be launched
+ * from an Activity via registerForActivityResult, this app cannot grant this on its own behalf. */
+fun requestCallScreeningRoleIntent(context: Context): android.content.Intent? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+    val roleManager = context.getSystemService(Context.ROLE_SERVICE) as? android.app.role.RoleManager ?: return null
+    if (!roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_CALL_SCREENING)) return null
+    return roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_CALL_SCREENING)
 }
 
 /** Briefly wakes the screen for an incoming-call announcement, the way a real dialer app would -

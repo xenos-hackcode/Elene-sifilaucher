@@ -243,6 +243,19 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Real cellular call decline - only functional once the user grants this app
+             RoleManager.ROLE_CALL_SCREENING (a real system role prompt, not something Device
+             Owner can silently grant). See EleneCallScreeningService for the real, disclosed
+             limitation on timing. -->
+        <service
+            android:name=".EleneCallScreeningService"
+            android:permission="android.permission.BIND_SCREENING_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+
         <!-- Cedal Shared System: receives sync broadcasts from verified same-signature
              Cedal sibling apps only (gated by the signature-level permission above) -->
         <receiver

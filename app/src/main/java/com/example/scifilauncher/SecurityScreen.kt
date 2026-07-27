@@ -61,7 +61,8 @@ fun SecurityScreen(
     onToggleKioskMode: (Boolean) -> Unit,
     onOpenLockScreenSettings: () -> Unit,
     onArmSequenceMode: () -> Unit,
-    onExitSequenceMode: () -> Unit
+    onExitSequenceMode: () -> Unit,
+    onRequestCallScreeningRole: () -> Unit
 ) {
     var showListeningInfoDialog by remember { mutableStateOf(showListeningInfo) }
 
@@ -280,6 +281,54 @@ fun SecurityScreen(
                                     "reboot unless the device is rooted. Nothing here works " +
                                     "silently - you'll see Shizuku's own permission prompt the " +
                                     "first time this app asks.",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp
+                            )
+                        }
+                    )
+                }
+            }
+
+            PanelSection(title = "PHONE CALLS", themeColor = themeColor) {
+                val callContext = LocalContext.current
+                var callScreeningGranted by remember { mutableStateOf(hasCallScreeningRole(callContext)) }
+                var showCallScreeningInfo by remember { mutableStateOf(false) }
+                PanelRow(
+                    label = "Decline calls by voice",
+                    themeColor = themeColor,
+                    value = if (callScreeningGranted) "Granted" else "Tap to grant",
+                    showDivider = false,
+                    onInfoClick = { showCallScreeningInfo = true },
+                    onClick = {
+                        if (!callScreeningGranted) {
+                            onRequestCallScreeningRole()
+                        }
+                        callScreeningGranted = hasCallScreeningRole(callContext)
+                    }
+                )
+                if (showCallScreeningInfo) {
+                    AlertDialog(
+                        onDismissRequest = { showCallScreeningInfo = false },
+                        confirmButton = {
+                            TextButton(onClick = { showCallScreeningInfo = false }) {
+                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                            }
+                        },
+                        title = { Text("Decline calls by voice", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text(
+                                "Saying \"pick it up\" to answer a real cellular call already " +
+                                    "works without this. Declining/hanging up a call by voice on " +
+                                    "a real cellular call specifically needs this app to hold " +
+                                    "Android's \"Caller ID & spam\" role - there's no other way " +
+                                    "for a non-default-phone-app to reject a ringing call. This " +
+                                    "opens the real system prompt for that role; on some phones " +
+                                    "it may compete with a built-in Caller ID app for the same " +
+                                    "role. Even once granted, declining several seconds after a " +
+                                    "call starts ringing (rather than instantly) isn't guaranteed " +
+                                    "to work - that's a real Android platform limitation, not a " +
+                                    "bug in this app. VoIP call declines (WhatsApp etc.) don't " +
+                                    "need this at all - those already work independently.",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )

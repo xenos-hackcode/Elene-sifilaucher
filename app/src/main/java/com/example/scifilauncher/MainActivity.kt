@@ -234,6 +234,20 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
     ) { /* NearbyDevicesScreen re-reads hasNearbyDevicesPermissions() on recompose */ }
 
+    private val callScreeningRoleLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { /* SecurityScreen re-reads hasCallScreeningRole() on the next tap/recompose - the role
+         grant prompt is a real system UI, not something this app controls the outcome of. */ }
+
+    private fun requestCallScreeningRole() {
+        val intent = requestCallScreeningRoleIntent(this)
+        if (intent != null) {
+            runCatching { callScreeningRoleLauncher.launch(intent) }
+        } else {
+            Toast.makeText(this, "Call screening isn't available on this Android version.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun requestNearbyDevicesPermissions() {
         val perms = mutableListOf(
             android.Manifest.permission.ACCESS_FINE_LOCATION,
@@ -2197,7 +2211,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                             speak("Negative. Biometric confirmation required to exit sequence mode.")
                                         }
                                     )
-                                }
+                                },
+                                onRequestCallScreeningRole = { requestCallScreeningRole() }
                             )
                         }
 
