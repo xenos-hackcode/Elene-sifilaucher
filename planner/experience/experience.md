@@ -53,6 +53,11 @@
   not just written - but still unconfirmed end-to-end (a real "reply to my last message" etc.
   hasn't been tried against the deployed backend yet).
 
+- (2026-07-27) Backend redeployed again (revision elene-backend-00023-qc4) after the WhatsApp/
+  call/voice-memo follow-up fixes, specifically to document the new end_call verb. Smoke-tested,
+  responding correctly. Standing instruction from the user: always redeploy the backend after a
+  main.py change, don't wait to be asked each time.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists
