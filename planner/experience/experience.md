@@ -179,6 +179,34 @@
   requirement) before that path can even be exercised, and the actual round trip needs a real
   triggered command while watching logcat, not a headless simulation.
 
+- (2026-07-27) Real live-testing round on screen perception: user reported describe_screen "doesn't
+  seem to work" and the AI's own voice affecting listening. Root-caused both from real logcat, not
+  guessed: (1) describe_screen - the backend was replying in "chat" mode with a plausible-sounding
+  fabricated answer ("Current screen shows the Game view...") instead of ever issuing the
+  describe_screen command (confirmed via logcat: commands=[] both times "describe screen" was
+  said) - fixed by strengthening the backend prompt's instruction, redeployed (revision
+  elene-backend-00026-4hg). (2) Also found live, via the stuck-service investigation: after a
+  single-shot capture or a MediaProjection self-revoke, ScreenPerceptionService could get stuck
+  running forever (confirmed - the :recorder process and its foreground notification were still
+  alive many minutes later, well after MediaProjection/BufferQueue logs showed the OS side was
+  already torn down) - root cause was mediaProjection.stop() re-triggering the same onStop()
+  callback re-entrantly with no idempotency guard; fixed with a tornDown flag + defensive
+  runCatching around the callback body. (3) The mic-reopens-with-AI's-own-voice complaint was
+  addressed by giving the two "TTS truly just finished" resume paths (speechDoneListener,
+  playOverlayAudioBytes) a 500ms buffer before reopening the mic instead of 0ms, to let acoustic
+  echo from the phone's own speaker settle first - **not yet confirmed this is the full/correct
+  root cause**, since a manual bubble-tap re-engaging after "stop listening" was heard is an
+  equally plausible innocent explanation for what was seen in the same logs; needs the user to
+  specifically notice whether the issue persists after this delay change.
+- (2026-07-27) Force-open Option A (Sequence Mode WhatsApp alert only) built: a narrow,
+  automated-only keyguard bypass via Device Owner's setKeyguardDisabled(), scoped tightly to the
+  exact span SequenceAlertWorker's WhatsApp send needs the screen, re-enabled the instant that
+  send's own callback reports done (success or failure) - not a standing bypass anyone can
+  trigger, per the declined.md precedent this was checked against. Builds clean, installs with
+  no crash. **Not yet confirmed live**: an actual Sequence Mode alert firing while the phone is
+  genuinely locked, confirming the keyguard actually gets bypassed just for that automated send
+  and is fully restored afterward.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

@@ -734,11 +734,14 @@ class ScifiAccessibilityService : AccessibilityService() {
     private val speechDoneListener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {}
         override fun onDone(utteranceId: String?) {
-            bubbleHandler.post { retryListeningSoon(0) }
+            // Same acoustic-settle reasoning as playOverlayAudioBytes's completion listener -
+            // real speech just played through the speaker, give it a moment before the mic
+            // goes live again.
+            bubbleHandler.post { retryListeningSoon(500L) }
         }
         @Deprecated("Deprecated in Java", ReplaceWith(""))
         override fun onError(utteranceId: String?) {
-            bubbleHandler.post { retryListeningSoon(0) }
+            bubbleHandler.post { retryListeningSoon(500L) }
         }
     }
 
@@ -795,13 +798,20 @@ class ScifiAccessibilityService : AccessibilityService() {
                 mp.release()
                 if (bubbleMediaPlayer === mp) bubbleMediaPlayer = null
                 runCatching { file.delete() }
-                retryListeningSoon(0)
+                // Real gap the user noticed live ("the AI's voice is affecting when it tries to
+                // listen"): reopening the mic with zero delay right as playback completes gives
+                // the phone's own speaker output no time to acoustically settle before the mic
+                // is live again, on a device where speaker and mic sit close together. A short
+                // buffer here (unlike the 0-delay used elsewhere for "nothing was said, go
+                // straight back to listening" cases where no audio played at all) gives real
+                // playback's own echo/tail time to die down first.
+                retryListeningSoon(500L)
             }
             player.setOnErrorListener { mp, _, _ ->
                 mp.release()
                 if (bubbleMediaPlayer === mp) bubbleMediaPlayer = null
                 runCatching { file.delete() }
-                retryListeningSoon(0)
+                retryListeningSoon(500L)
                 true
             }
             player.setDataSource(file.absolutePath)

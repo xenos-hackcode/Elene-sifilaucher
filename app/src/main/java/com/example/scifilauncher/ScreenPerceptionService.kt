@@ -99,7 +99,19 @@ class ScreenPerceptionService : Service() {
             // would keep requesting frames from a dead pipe instead of aborting cleanly.
             projection.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    sendBroadcast(Intent(ACTION_PROJECTION_STOPPED).setPackage(packageName))
+                    // Confirmed real bug, found live: teardown()'s own mediaProjection?.stop()
+                    // call re-triggers this SAME callback re-entrantly (calling .stop() on a
+                    // MediaProjection invokes its own registered Callback.onStop(), even for a
+                    // self-initiated stop, not just a system-initiated one) - and an unguarded
+                    // sendBroadcast() throwing here would have skipped teardown() entirely,
+                    // leaving the service (and its foreground notification) stuck alive forever
+                    // even after the OS had already torn down the real projection underneath it
+                    // (confirmed via a live device left in exactly that state - process and
+                    // notification still alive minutes later, MediaProjection/BufferQueue logs
+                    // showing the OS side was long gone). teardown() below is now idempotent and
+                    // this whole body is defensive, so neither an exception nor re-entrancy can
+                    // leave the service stuck again.
+                    runCatching { sendBroadcast(Intent(ACTION_PROJECTION_STOPPED).setPackage(packageName)) }
                     teardown()
                 }
             }, handler)
@@ -189,7 +201,14 @@ class ScreenPerceptionService : Service() {
         if (singleShot) teardown()
     }
 
+    // Idempotent - can be safely re-entered (mediaProjection?.stop() below re-triggers this
+    // same service's own onStop() callback synchronously, see the comment there) without
+    // double-releasing anything or calling stopSelf() from a bad state.
+    @Volatile private var tornDown = false
+
     private fun teardown() {
+        if (tornDown) return
+        tornDown = true
         runCatching { unregisterReceiver(requestReceiver) }
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null

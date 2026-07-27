@@ -36,6 +36,21 @@ class SequenceDeviceAdminReceiver : DeviceAdminReceiver() {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return
             runCatching { dpm.wipeData(0) }
         }
+
+        /** Narrow, automated-only keyguard bypass - exists for exactly one caller
+         * (SequenceAlertWorker's WhatsApp send), never a standing "skip the lock screen"
+         * shortcut a person could trigger. No human ever taps anything through this: it's
+         * disabled right before the automated send starts and the CALLER is responsible for
+         * re-enabling it the instant that send finishes (success or failure), via the SAME
+         * callback that reports the send result - never left disabled longer than that one
+         * operation actually needs. Requires real Device Owner status (setKeyguardDisabled is
+         * a device-owner-only API), not just an active admin. Returns whether the call actually
+         * took effect, so the caller knows whether a matching re-enable call is needed. */
+        fun setKeyguardDisabledTemporarily(context: Context, disabled: Boolean): Boolean {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager ?: return false
+            if (!dpm.isDeviceOwnerApp(context.packageName)) return false
+            return runCatching { dpm.setKeyguardDisabled(componentName(context), disabled) }.getOrDefault(false)
+        }
     }
 
     override fun onEnabled(context: Context, intent: Intent) {
