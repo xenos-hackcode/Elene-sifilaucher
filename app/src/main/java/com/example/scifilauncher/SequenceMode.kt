@@ -8,7 +8,6 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
-import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -86,46 +85,29 @@ fun captureLastLocation(context: Context, prefs: SharedPreferences) {
     saveLastKnownLocation(prefs, best.latitude, best.longitude)
 }
 
-/** Resolves phone numbers for contacts named/labelled father, mother, brother ("bro"), lil sis. */
-fun resolveFamilyContacts(context: Context): List<FamilyContact> {
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
-        return emptyList()
+/** Fixed emergency-alert numbers for Sequence Mode's WhatsApp/SMS distress alert - not a
+ * contacts-app lookup, a direct number list the user set. */
+private val EMERGENCY_CONTACT_NUMBERS = listOf(
+    "+447784412528",
+    "+447476853698",
+    "+447901613720",
+    "+2349037855461",
+    "+447391333985",
+    "+447501965634",
+    "+2208770997",
+    "+2348163592559",
+    "+2348051982615",
+    "+2348035774599",
+    "+2347015061644",
+    "+2347014748693",
+    "+447767105821",
+    "+27643716245"
+)
+
+fun resolveFamilyContacts(context: Context): List<FamilyContact> =
+    EMERGENCY_CONTACT_NUMBERS.mapIndexed { index, number ->
+        FamilyContact("emergency contact ${index + 1}", number, number)
     }
-
-    val targets = linkedMapOf(
-        "father" to listOf("father", "dad"),
-        "mother" to listOf("mother", "mum", "mom"),
-        "brother" to listOf("brother", "bro"),
-        "lil sis" to listOf("lil sis", "little sister", "sister", "sis")
-    )
-
-    val resolver = context.contentResolver
-    val found = mutableListOf<FamilyContact>()
-
-    for ((label, aliases) in targets) {
-        for (alias in aliases) {
-            resolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-                "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-                arrayOf("%$alias%"),
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                    val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                    val number = if (numberIdx >= 0) cursor.getString(numberIdx) else null
-                    val name = if (nameIdx >= 0) cursor.getString(nameIdx) else alias
-                    if (!number.isNullOrBlank()) {
-                        found.add(FamilyContact(label, name ?: alias, number))
-                    }
-                }
-            }
-            if (found.any { it.label == label }) break
-        }
-    }
-    return found
-}
 
 fun buildAlertMessage(prefs: SharedPreferences): String {
     val loc = loadLastKnownLocation(prefs)

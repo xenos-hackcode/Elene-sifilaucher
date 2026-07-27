@@ -9,10 +9,9 @@ import androidx.core.content.ContextCompat
 data class ResolvedContact(val displayName: String, val phoneNumber: String)
 
 /** Forward lookup (spoken name -> possible contacts) for Elene's general messaging feature -
- * distinct from SequenceMode.resolveFamilyContacts, which is a fixed role-alias lookup
- * (father/mother/etc.) for anti-theft alerts, not a general "find this person" helper. Returns
- * every match rather than just the first, so the caller can ask "which John did you mean" when
- * there's more than one. */
+ * distinct from SequenceMode.resolveFamilyContacts, which returns a fixed list of emergency
+ * alert numbers, not a contacts-app lookup. Returns every match rather than just the first, so
+ * the caller can ask "which John did you mean" when there's more than one. */
 fun findContactsByName(context: Context, query: String): List<ResolvedContact> {
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
         return emptyList()
