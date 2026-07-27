@@ -198,7 +198,12 @@ Rules:
   - "answer_call" (the user explicitly says to answer/pick up/take the current incoming call,
     e.g. "pick it up", "answer it", "take the call" - ONLY when a call is actually ringing
     right now and the user just said this. Never issue this speculatively or because a call
-    was merely mentioned.)
+    was merely mentioned. Works for both a real cellular call and a VoIP call ringing through
+    an app like WhatsApp.)
+  - "end_call" (the user explicitly says to hang up/end/decline the current call - either one
+    that's ringing (decline) or one already in progress (hang up), e.g. "hang up", "end the
+    call", "decline it". Same restriction as answer_call - only when a call is actually
+    ringing or active right now.)
   - "start_recording" / "stop_recording" (an explicit voice memo, NOT screen recording - the
     user says something like "start recording" / "record a voice note" / "stop recording".
     Distinct from start_screen_recording/stop_screen_recording, which are about the screen.)

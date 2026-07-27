@@ -19,6 +19,19 @@ data class LastMessageInfo(
     val text: String
 )
 
+/** A VoIP call (WhatsApp/Zoom/etc.) ringing right now - these never touch TelephonyManager/
+ * TelecomManager at all, so the only reliable, general way to notice one is the same convention
+ * calling apps use for their own incoming-call notification: Notification.CATEGORY_CALL. Storing
+ * the raw actions (rather than pre-resolving which is Accept/Decline) since their exact order
+ * isn't a guaranteed contract - matched by label text when actually responding instead. */
+data class IncomingVoipCall(
+    val key: String,
+    val appName: String,
+    val packageName: String,
+    val callerName: String,
+    val actions: List<Notification.Action>
+)
+
 /** Notification access is a special Android permission that can only be granted through
  * Settings, never a normal runtime permission dialog - without this explicit check + deep
  * link, the listener silently never connects and nothing ever shows up, with no error
@@ -48,6 +61,9 @@ class XenosNotificationListener : NotificationListenerService() {
 
         @Volatile
         var hasUnreadMessage: Boolean = false
+
+        @Volatile
+        var incomingVoipCall: IncomingVoipCall? = null
 
         @JvmStatic
         val missedNotifications: MutableList<LastMessageInfo> = mutableListOf()
@@ -149,13 +165,50 @@ class XenosNotificationListener : NotificationListenerService() {
             }
             sendBroadcast(intent)
         }
+
+        // A ringing VoIP call - only broadcast once per distinct call (a ringing notification
+        // can legitimately re-post/update itself while still ringing; re-announcing every update
+        // would repeat "incoming call" over and over for the same call).
+        if (notification.category == Notification.CATEGORY_CALL && incomingVoipCall?.key != sbn.key) {
+            val call = IncomingVoipCall(
+                key = sbn.key,
+                appName = appName,
+                packageName = pkg,
+                callerName = title.ifBlank { appName },
+                actions = notification.actions?.toList() ?: emptyList()
+            )
+            incomingVoipCall = call
+            sendBroadcast(Intent("com.example.scifilauncher.INCOMING_VOIP_CALL").apply {
+                putExtra("appName", appName)
+                putExtra("callerName", call.callerName)
+            })
+        }
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         super.onNotificationRemoved(sbn)
         if (sbn != null) {
             replyableMap.remove(sbn.key)
+            if (incomingVoipCall?.key == sbn.key) incomingVoipCall = null
         }
+    }
+
+    /** Accepts or declines the currently-ringing VoIP call via its own notification's real
+     * action (the same PendingIntent tapping the on-screen Accept/Decline button would fire) -
+     * not a guessed UI tap. Actions aren't guaranteed to come in a fixed order, so this matches
+     * by the button's own visible label instead of position. */
+    fun respondToVoipCall(accept: Boolean): Boolean {
+        val call = incomingVoipCall ?: return false
+        val keywords = if (accept) listOf("accept", "answer") else listOf("decline", "reject", "hang up", "end")
+        val action = call.actions.firstOrNull { act ->
+            val label = act.title?.toString()?.lowercase().orEmpty()
+            keywords.any { label.contains(it) }
+        } ?: return false
+        return runCatching {
+            action.actionIntent.send()
+            incomingVoipCall = null
+            true
+        }.getOrDefault(false)
     }
 
     private fun findDirectReplyAction(notification: Notification): Notification.Action? {

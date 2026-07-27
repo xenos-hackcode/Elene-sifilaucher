@@ -138,19 +138,48 @@ fun buildAlertMessage(prefs: SharedPreferences): String {
     return "This is an automated alert from Xenos's phone. It may be lost or stolen and is currently locked down. $locationPart"
 }
 
-/** Opens a WhatsApp chat pre-filled with [message] and taps Send via Accessibility. */
-fun sendWhatsAppAlert(context: Context, phoneNumber: String, message: String) {
+/** Opens a WhatsApp chat pre-filled with [message] and taps Send via Accessibility. [onResult]
+ * reports whether Send was actually tapped - a single fixed-delay attempt (the original
+ * approach here) turned out unreliable on real hardware: a first-time/unsaved number shows an
+ * intermediate "Continue to chat" screen before the real compose screen ever appears, and
+ * WhatsApp's own cold-start time varies. Polls for up to ~10s instead of guessing one delay,
+ * and tries to tap through that interstitial on every poll (harmless no-op via clickByText if
+ * it's not actually there). */
+fun sendWhatsAppAlert(context: Context, phoneNumber: String, message: String, onResult: (Boolean) -> Unit = {}) {
     val sanitized = phoneNumber.filter { it.isDigit() || it == '+' }
     val intent = Intent(Intent.ACTION_VIEW).apply {
         data = Uri.parse("https://wa.me/$sanitized?text=${Uri.encode(message)}")
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
-    runCatching { context.startActivity(intent) }
+    val opened = runCatching { context.startActivity(intent) }.isSuccess
+    if (!opened) {
+        onResult(false)
+        return
+    }
 
-    // Give WhatsApp a moment to open and render the chat before trying to tap Send.
-    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-        ScifiAccessibilityService.instance?.clickByText("Send")
-    }, 3500L)
+    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    // WhatsApp shows this for a number with no existing chat/not in contacts - has to be
+    // dismissed before the real compose screen (with the actual Send button) ever appears.
+    val continueLabels = listOf("Continue to Chat", "Continue to chat", "CONTINUE TO CHAT", "Continue")
+    var attemptsLeft = 18 // ~9s at 500ms, after an initial 1.2s head start for cold-start launch
+    lateinit var tick: () -> Unit
+    tick = {
+        val service = ScifiAccessibilityService.instance
+        when {
+            service == null -> onResult(false)
+            service.clickByText("Send") -> onResult(true)
+            else -> {
+                continueLabels.forEach { runCatching { service.clickByText(it) } }
+                if (attemptsLeft > 0) {
+                    attemptsLeft--
+                    handler.postDelayed(tick, 500L)
+                } else {
+                    onResult(false)
+                }
+            }
+        }
+    }
+    handler.postDelayed(tick, 1200L)
 }
 
 /** Direct SMS alert over the cellular network - unlike WhatsApp above, this doesn't depend on

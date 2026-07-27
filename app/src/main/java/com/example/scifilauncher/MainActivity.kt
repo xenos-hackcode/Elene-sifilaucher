@@ -1083,6 +1083,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var pendingMessageTarget by remember { mutableStateOf("") }
                 var pendingMessageRecipientLabel by remember { mutableStateOf("") }
 
+                // Confirmed real bug (found via real use, not assumed): starting VoiceMemoService
+                // synchronously inside the verb branch below meant the mic was already recording
+                // by the time "Recording started." was spoken - the memo's own first second was
+                // Elene announcing herself. Deferred instead: the verb branch only sets this flag,
+                // and the actual start happens from speakWithCompletion's onDone below, once the
+                // confirmation has genuinely finished playing.
+                var pendingVoiceMemoStart by remember { mutableStateOf(false) }
+
                 fun requestDeviceActionConfirmation(
                     actionLabel: String,
                     reason: String,
@@ -1368,11 +1376,15 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             val answered = attemptAnswerCall(this@MainActivity)
                             commandReplyOverride = if (answered) "Answering." else "I couldn't answer that one - you'll need to tap it yourself."
                         }
+                        "end_call" -> {
+                            val ended = attemptEndCall(this@MainActivity)
+                            commandReplyOverride = if (ended) "Ending the call." else "I couldn't end that one - you'll need to tap it yourself."
+                        }
                         "start_recording" -> {
                             commandReplyOverride = if (VoiceMemoService.isRecording) {
                                 "Already recording."
                             } else {
-                                VoiceMemoService.start(this@MainActivity)
+                                pendingVoiceMemoStart = true
                                 "Recording started."
                             }
                         }
@@ -1709,6 +1721,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 ?: "Negative. I had a problem thinking just now."
                             if (commandReplyOverride != null) eleneReply = commandReplyOverride
                             speakWithCompletion(replyText) {
+                                // Only now, after "Recording started." has actually finished
+                                // playing, does the mic itself start - see the comment on
+                                // pendingVoiceMemoStart above for why this can't run synchronously
+                                // inside the start_recording branch.
+                                if (pendingVoiceMemoStart) {
+                                    pendingVoiceMemoStart = false
+                                    VoiceMemoService.start(this@MainActivity)
+                                }
                                 // Loop back into listening once the reply finishes speaking,
                                 // rather than closing - "stop listening" is the only exit,
                                 // unless continuous listening is off in Settings.
@@ -2608,16 +2628,24 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             onRereadTap = { speak(pendingMessageDraftText) },
                             onCancel = { showMessageDraftConfirm = false },
                             onSend = {
-                                val sent = when (pendingMessageChannel) {
-                                    "direct_reply" -> XenosNotificationListener.instance?.sendDirectReply(pendingMessageTarget, pendingMessageDraftText) == true
-                                    "sms" -> sendSmsAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText)
-                                    else -> {
-                                        sendWhatsAppAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText)
-                                        true
+                                showMessageDraftConfirm = false
+                                when (pendingMessageChannel) {
+                                    "direct_reply" -> {
+                                        val sent = XenosNotificationListener.instance?.sendDirectReply(pendingMessageTarget, pendingMessageDraftText) == true
+                                        speak(if (sent) "Sent." else "Couldn't send that - the app may not be available.")
+                                    }
+                                    "sms" -> {
+                                        val sent = sendSmsAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText)
+                                        speak(if (sent) "Sent." else "Couldn't send that - the app may not be available.")
+                                    }
+                                    // WhatsApp's send is now a real poll-and-tap (up to ~10s),
+                                    // not a single guessed delay - the true/false result only
+                                    // arrives once that finishes, so the confirmation speaks
+                                    // from the callback, not synchronously here.
+                                    else -> sendWhatsAppAlert(this@MainActivity, pendingMessageTarget, pendingMessageDraftText) { sent ->
+                                        speak(if (sent) "Sent." else "Couldn't send that - WhatsApp may not have opened the chat in time.")
                                     }
                                 }
-                                speak(if (sent) "Sent." else "Couldn't send that - the app may not be available.")
-                                showMessageDraftConfirm = false
                             }
                         )
                     }

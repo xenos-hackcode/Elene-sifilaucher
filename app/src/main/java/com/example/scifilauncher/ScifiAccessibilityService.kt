@@ -68,6 +68,14 @@ class ScifiAccessibilityService : AccessibilityService() {
                 registerReceiver(screenStateReceiver, filter)
             }
         }
+        runCatching {
+            val voipFilter = IntentFilter("com.example.scifilauncher.INCOMING_VOIP_CALL")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(voipCallReceiver, voipFilter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(voipCallReceiver, voipFilter)
+            }
+        }
         registerCallStateListener()
     }
 
@@ -78,10 +86,25 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { speechRecognizer?.destroy() }
         runCatching { bubbleTts?.shutdown() }
         runCatching { unregisterReceiver(screenStateReceiver) }
+        runCatching { unregisterReceiver(voipCallReceiver) }
         unregisterCallStateListener()
         bubbleServiceScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()
+    }
+
+    // VoIP calls (WhatsApp/etc.) never touch TelephonyManager, so this is a separate signal
+    // from the cellular CALL_STATE_RINGING path below - fired by XenosNotificationListener when
+    // it sees a CATEGORY_CALL notification.
+    private val voipCallReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val callerName = intent?.getStringExtra("callerName")
+            val appName = intent?.getStringExtra("appName")
+            wakeScreenBriefly(this@ScifiAccessibilityService)
+            runCatching {
+                speakOut(if (!callerName.isNullOrBlank()) "Incoming call from $callerName." else "Incoming call${if (!appName.isNullOrBlank()) " on $appName" else ""}.")
+            }
+        }
     }
 
     // ---- Call awareness: announce who's calling, answer only on explicit "pick it up" ----
@@ -99,6 +122,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         // once for the same call - only announce once per distinct incoming number/ring.
         if (incomingNumber != null && incomingNumber == lastAnnouncedRingingNumber) return
         lastAnnouncedRingingNumber = incomingNumber
+        wakeScreenBriefly(this)
         val name = incomingNumber?.let { runCatching { reverseLookupContactName(this, it) }.getOrNull() }
         val text = when {
             !name.isNullOrBlank() -> "Incoming call from $name."
@@ -421,7 +445,18 @@ class ScifiAccessibilityService : AccessibilityService() {
 
     @Volatile private var voiceIdCheckInProgress = false
 
+    // Set by the "start_recording" verb, consumed here - retryListeningSoon() is already the
+    // one place every "Elene just finished (or gave up on) speaking" path in this file funnels
+    // through (speechDoneListener, playOverlayAudioBytes completion/error, speakOut's
+    // can't-speak case), so it doubles as the correct "safe to actually start the mic now" hook
+    // without needing to thread a new completion callback through the whole TTS plumbing.
+    private var pendingVoiceMemoStart = false
+
     private fun retryListeningSoon(delayMillis: Long = 900L) {
+        if (pendingVoiceMemoStart) {
+            pendingVoiceMemoStart = false
+            VoiceMemoService.start(this@ScifiAccessibilityService)
+        }
         // This turn's actual work (listening, replying, running commands) just wrapped up -
         // let go of media focus now rather than holding it for the rest of a continuous-
         // listening session that might not hear anything else for a while. startListening()
@@ -811,8 +846,14 @@ class ScifiAccessibilityService : AccessibilityService() {
             "send_message" -> arg != null && bringHomeWithCommand("send_message:$arg")
             // No UI needed for these - complete directly, same as open_app above.
             "answer_call" -> { attemptAnswerCall(this@ScifiAccessibilityService); true }
+            "end_call" -> { attemptEndCall(this@ScifiAccessibilityService); true }
+            // Doesn't start the recorder here directly - see the comment on
+            // pendingVoiceMemoStart / retryListeningSoon() for why: it needs to wait until the
+            // "Recording started." reply (already in flight via speakOut, called just before the
+            // command loop that reaches this) has actually finished playing, or the memo's own
+            // first second is Elene announcing herself.
             "start_recording" -> runCatching {
-                if (!VoiceMemoService.isRecording) VoiceMemoService.start(this@ScifiAccessibilityService)
+                if (!VoiceMemoService.isRecording) pendingVoiceMemoStart = true
                 true
             }.getOrDefault(false)
             "stop_recording" -> runCatching {
