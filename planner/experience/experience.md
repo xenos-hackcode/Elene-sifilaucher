@@ -150,6 +150,19 @@
   first match only if nothing text-like matched at all. Both fixes built, installed, no crash -
   **not yet re-confirmed live** by the user that either specific bug is actually gone.
 
+- (2026-07-27) Updates screen (Stage 1 of self-updating Elene) built per the plan in
+  declarative-toasting-glacier.md: a fingerprint-gated approval queue (UpdateProposalLog +
+  UpdatesScreen, reached via Security > Activity > Updates), reusing the exact same
+  requestDeviceActionConfirmation/BiometricAuthActivity flow every other device-owner action
+  already goes through - not a separate/parallel approval mechanism. Confirmed so far: builds
+  clean, installs with no crash, accessibility service reconnects. Backend redeployed (revision
+  elene-backend-00025-fkq) with the propose_update:user:.../propose_update:elene:... prompt
+  instructions. **Not yet confirmed**: a real voice-triggered proposal actually creating an
+  entry and showing the live confirmation panel, an Elene-self-initiated proposal landing
+  quietly in the Updates screen without interrupting, and reviewing/approving a queued entry
+  from the screen itself with a real fingerprint scan. Deliberately Stage 1 only - no
+  code-generation/build/deploy pipeline exists yet behind an APPROVED entry.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

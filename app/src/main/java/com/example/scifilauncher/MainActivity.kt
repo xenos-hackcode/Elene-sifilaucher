@@ -356,6 +356,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     // Every device-owner-level action goes through this before it happens. Never
     // auto-approves on silence - the caller is responsible for snoozing on a timeout.
     private var pendingConfirmationApprove: (() -> Unit)? = null
+    // Optional - most callers don't need to react to a denial, only ActionLog does by default.
+    // Added for update proposals, which need their own log kept in sync on both outcomes.
+    private var pendingConfirmationDeny: (() -> Unit)? = null
 
     private var pendingBiometricCallback: Pair<() -> Unit, () -> Unit>? = null
 
@@ -1038,6 +1041,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showStorage by rememberSaveable { mutableStateOf(false) }
                 var showFileBrowser by rememberSaveable { mutableStateOf(false) }
                 var showRequests by rememberSaveable { mutableStateOf(false) }
+                var showUpdates by rememberSaveable { mutableStateOf(false) }
                 var showAppLog by rememberSaveable { mutableStateOf(false) }
                 var showCommands by rememberSaveable { mutableStateOf(false) }
                 var showNearbyDevices by rememberSaveable { mutableStateOf(false) }
@@ -1144,6 +1148,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     reason: String,
                     target: String?,
                     scheduleType: String? = null,
+                    onDeny: (() -> Unit)? = null,
                     onApprove: () -> Unit
                 ) {
                     val id = System.currentTimeMillis()
@@ -1152,6 +1157,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         ActionRequestEntry(id, actionLabel, reason, target, id, ActionRequestStatus.PENDING, null)
                     )
                     pendingConfirmationApprove = onApprove
+                    pendingConfirmationDeny = onDeny
                     pendingConfirmationId = id
                     pendingConfirmationLabel = actionLabel
                     pendingConfirmationReason = reason
@@ -1460,6 +1466,48 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             } else {
                                 toggleScreenRecord(true) { recording -> screenRecordingState = recording }
                                 commandReplyOverride = "Stopped and saving the recording."
+                            }
+                        }
+                        // Stage 1 of self-updating Elene - this only ever queues a PROPOSED
+                        // entry for fingerprint approval, never applies anything (there is no
+                        // build/deploy pipeline behind this yet). "user" origin means the user
+                        // directly asked, so it goes through the live confirmation flow right
+                        // away, same as any other device action; "elene" origin means she
+                        // proposed it herself while just chatting, so it only appears in the
+                        // Updates screen for later review - never interrupts unprompted.
+                        "propose_update" -> arg?.let { raw ->
+                            val parts = raw.split(":", limit = 3)
+                            val origin = if (parts.getOrNull(0)?.lowercase() == "elene") ProposalOrigin.ELENE else ProposalOrigin.USER
+                            val category = when (parts.getOrNull(1)?.lowercase()) {
+                                "feature" -> UpdateCategory.FEATURE_ADDED
+                                "fix" -> UpdateCategory.BUG_FIX
+                                "remove" -> UpdateCategory.FEATURE_REMOVED
+                                else -> UpdateCategory.OTHER
+                            }
+                            val description = parts.getOrNull(2)?.trim()
+                            if (description.isNullOrBlank()) return@let
+                            val title = description.take(60)
+                            val id = System.currentTimeMillis()
+                            UpdateProposalLog.record(
+                                this@MainActivity,
+                                UpdateProposalEntry(id, title, description, category, origin, id, UpdateProposalStatus.PROPOSED, null)
+                            )
+                            if (origin == ProposalOrigin.USER) {
+                                val actionWord = when (category) {
+                                    UpdateCategory.FEATURE_ADDED -> "Add feature"
+                                    UpdateCategory.BUG_FIX -> "Fix"
+                                    UpdateCategory.FEATURE_REMOVED -> "Remove"
+                                    UpdateCategory.OTHER -> "Update"
+                                }
+                                requestDeviceActionConfirmation(
+                                    actionLabel = "$actionWord: $title",
+                                    reason = description,
+                                    target = id.toString(),
+                                    onApprove = { UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.APPROVED) },
+                                    onDeny = { UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.DENIED) }
+                                )
+                            } else {
+                                commandReplyOverride = "Noted - I've added a suggestion to the Updates screen for you to review."
                             }
                         }
                         // Bridged from ScifiAccessibilityService, which has already stashed the
@@ -2152,6 +2200,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSecurity = false
                                     showRequests = true
                                 },
+                                onOpenUpdates = {
+                                    showSecurity = false
+                                    showUpdates = true
+                                },
                                 onOpenAppLog = {
                                     showSecurity = false
                                     showAppLog = true
@@ -2317,6 +2369,41 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onBack = {
                                     showRequests = false
                                     showSecurity = true
+                                }
+                            )
+                        }
+
+                        showUpdates -> {
+                            UpdatesScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                entries = UpdateProposalLog.loadAll(this@MainActivity),
+                                onBack = {
+                                    showUpdates = false
+                                    showSecurity = true
+                                },
+                                onReview = { entry ->
+                                    // Elene-originated proposals land here without an immediate
+                                    // prompt (she wasn't asked) - reviewing them from this screen
+                                    // routes through the exact same fingerprint gate every
+                                    // device-owner action already uses, not a separate one.
+                                    val actionWord = when (entry.category) {
+                                        UpdateCategory.FEATURE_ADDED -> "Add feature"
+                                        UpdateCategory.BUG_FIX -> "Fix"
+                                        UpdateCategory.FEATURE_REMOVED -> "Remove"
+                                        UpdateCategory.OTHER -> "Update"
+                                    }
+                                    requestDeviceActionConfirmation(
+                                        actionLabel = "$actionWord: ${entry.title}",
+                                        reason = entry.description,
+                                        target = entry.id.toString(),
+                                        onApprove = {
+                                            UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.APPROVED)
+                                        },
+                                        onDeny = {
+                                            UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.DENIED)
+                                        }
+                                    )
                                 }
                             )
                         }
@@ -2547,7 +2634,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
                         fun denyConfirmation() {
                             ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.DENIED)
+                            pendingConfirmationDeny?.invoke()
                             pendingConfirmationApprove = null
+                            pendingConfirmationDeny = null
                             pendingConfirmationScheduleType = null
                             pendingConfirmationScheduleTarget = null
                             pendingConfirmationId = null
@@ -2589,9 +2678,11 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         fun snoozeConfirmation(delayMinutes: Int) {
                             ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.SNOOZED)
                             val savedApprove = pendingConfirmationApprove
+                            val savedDeny = pendingConfirmationDeny
                             val savedTarget = pendingConfirmationScheduleTarget
                             val savedType = pendingConfirmationScheduleType
                             pendingConfirmationApprove = null
+                            pendingConfirmationDeny = null
                             pendingConfirmationScheduleType = null
                             pendingConfirmationScheduleTarget = null
                             pendingConfirmationId = null
@@ -2599,7 +2690,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 speak("I'll check back in ${formatMinutesForSpeech(delayMinutes)}.")
                                 scope.launch {
                                     kotlinx.coroutines.delay(delayMinutes * 60_000L)
-                                    requestDeviceActionConfirmation(confLabel, confReason, savedTarget, savedType, savedApprove)
+                                    requestDeviceActionConfirmation(confLabel, confReason, savedTarget, savedType, savedDeny, savedApprove)
                                 }
                             }
                         }
@@ -2620,6 +2711,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                         speak("Scheduled: $confLabel in ${formatMinutesForSpeech(delayMinutes)}.")
                                     }
                                     pendingConfirmationApprove = null
+                                    pendingConfirmationDeny = null
                                     pendingConfirmationScheduleType = null
                                     pendingConfirmationScheduleTarget = null
                                     pendingConfirmationId = null
@@ -2630,6 +2722,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.APPROVED)
                                     pendingConfirmationApprove?.invoke()
                                     pendingConfirmationApprove = null
+                                    pendingConfirmationDeny = null
                                     pendingConfirmationScheduleType = null
                                     pendingConfirmationScheduleTarget = null
                                     pendingConfirmationId = null
@@ -2656,6 +2749,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                                 ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.APPROVED)
                                                 pendingConfirmationApprove?.invoke()
                                                 pendingConfirmationApprove = null
+                                                pendingConfirmationDeny = null
                                                 pendingConfirmationScheduleType = null
                                                 pendingConfirmationScheduleTarget = null
                                                 pendingConfirmationId = null

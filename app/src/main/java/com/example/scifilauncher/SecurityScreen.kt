@@ -34,6 +34,7 @@ fun SecurityScreen(
     onOpenStorage: () -> Unit,
     onOpenFileManager: () -> Unit,
     onOpenRequests: () -> Unit,
+    onOpenUpdates: () -> Unit,
     onOpenAppLog: () -> Unit,
     onOpenCommands: () -> Unit,
     onRequestBiometricForVoiceId: (onSuccess: () -> Unit) -> Unit,
@@ -119,6 +120,7 @@ fun SecurityScreen(
 
             PanelSection(title = "ACTIVITY", themeColor = themeColor) {
                 PanelRow(label = "Requests", themeColor = themeColor, onClick = onOpenRequests)
+                PanelRow(label = "Updates", themeColor = themeColor, onClick = onOpenUpdates)
                 PanelRow(label = "Log", themeColor = themeColor, onClick = onOpenAppLog)
                 PanelRow(label = "New app installs", themeColor = themeColor, onClick = onOpenInstallFlags)
                 PanelToggleRow(

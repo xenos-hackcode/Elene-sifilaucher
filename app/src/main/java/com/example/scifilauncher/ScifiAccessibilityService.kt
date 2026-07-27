@@ -983,6 +983,10 @@ class ScifiAccessibilityService : AccessibilityService() {
             // complete here - same pattern as search_app/schedule above.
             "reply_last_message" -> arg != null && bringHomeWithCommand("reply_last_message:$arg")
             "send_message" -> arg != null && bringHomeWithCommand("send_message:$arg")
+            // Stage 1 of self-updating Elene - needs MainActivity's fingerprint confirmation UI
+            // (user-originated) or just the Updates screen write (Elene-originated), same
+            // bridge-rather-than-complete-here reasoning.
+            "propose_update" -> arg != null && bringHomeWithCommand("propose_update:$arg")
             // No UI needed for these - complete directly, same as open_app above.
             "answer_call" -> { attemptAnswerCall(this@ScifiAccessibilityService); true }
             "end_call" -> { attemptEndCall(this@ScifiAccessibilityService); true }
