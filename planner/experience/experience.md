@@ -98,6 +98,24 @@
   it makes `ShizukuManager.isAvailable()` go back to false and the app silently falls back to the
   weaker `killBackgroundProcesses()` path instead of a real force-stop.
 
+- (2026-07-27) Real bug found and root-caused via live on-device evidence, not guessed: the
+  install-watcher (PackageInstallWatcher) never fired for real installs, confirmed by installing
+  a genuinely fresh APK (F-Droid client) and finding `install_flags_prefs.xml` never got created.
+  Ruled out several plausible causes one at a time with real checks before finding the actual one:
+  manifest registration (confirmed correct via `dumpsys package`), package-visibility filtering
+  (added QUERY_ALL_PACKAGES, confirmed it genuinely expanded visibility via `dumpsys package
+  ... Queries:`, receiver still didn't fire), battery/standby restrictions (app already in the
+  best/EXEMPTED standby bucket). The real cause, found via `dumpsys activity broadcasts`: manifest-
+  declared receivers for PACKAGE_ADDED are being skipped with "Background execution not allowed"
+  on this Android 16 / One UI build - and tellingly, Samsung's own Galaxy Store install receiver
+  (`com.sec.android.app.samsungapps/.receiver.PackageAddedReceiver`) was being skipped for the
+  identical reason in the same broadcast history, confirming this is a platform/OEM change, not
+  something specific to this app. Fixed by moving the logic to a receiver dynamically registered
+  on the already-running ScifiAccessibilityService (same proven pattern as screenStateReceiver/
+  voipCallReceiver) instead of a manifest `<receiver>`. Re-tested with another fresh F-Droid
+  install after the fix: `install_flags_prefs.xml` now correctly records it (sideloaded=true,
+  flagged permissions correctly identified) - confirmed working, not assumed.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

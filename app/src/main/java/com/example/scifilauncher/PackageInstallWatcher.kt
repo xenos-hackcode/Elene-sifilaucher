@@ -3,7 +3,6 @@ package com.example.scifilauncher
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -45,8 +44,18 @@ private val TRUSTED_INSTALLERS = setOf(
     "com.amazon.venezia"
 )
 
-class PackageInstallWatcher : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
+/** Handles a PACKAGE_ADDED intent - NOT a manifest-registered BroadcastReceiver. Confirmed via
+ * live on-device testing (dumpsys activity broadcasts) that manifest-declared receivers for
+ * PACKAGE_ADDED are silently skipped on this Android 16 / One UI build with "Background
+ * execution not allowed" - the same thing happens to Samsung's own Galaxy Store install
+ * receiver, so it's a platform/OEM background-execution-limit change, not something specific to
+ * this app. The old manifest comment claiming PACKAGE_ADDED is exempt from those limits was
+ * accurate historically but is no longer true here. Fix: called instead from a receiver
+ * dynamically registered on the already-running ScifiAccessibilityService (see
+ * registerReceiver(installReceiver, ...) there) - a live process's registered listener isn't
+ * subject to the "cold-start a stopped app" restriction that blocks the manifest path. */
+object PackageInstallWatcher {
+    fun handle(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_PACKAGE_ADDED) return
         // Only genuinely new installs - package replacement (app updates itself) isn't a
         // new-install security event.
@@ -88,6 +97,7 @@ class PackageInstallWatcher : BroadcastReceiver() {
             flaggedPermissions = flaggedPerms
         )
         InstallFlags.record(context, entry)
+        SystemEventLog.record(context, "InstallWatch", "Recorded $pkg (sideloaded=$sideloaded, flagged=${flaggedPerms.size})")
 
         if (entry.isFlagged) {
             notifyFlagged(context, entry)
@@ -135,7 +145,5 @@ class PackageInstallWatcher : BroadcastReceiver() {
         }
     }
 
-    companion object {
-        private const val CHANNEL_ID = "install_flags"
-    }
+    private const val CHANNEL_ID = "install_flags"
 }

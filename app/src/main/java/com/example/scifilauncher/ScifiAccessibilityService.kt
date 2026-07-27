@@ -76,6 +76,24 @@ class ScifiAccessibilityService : AccessibilityService() {
                 registerReceiver(voipCallReceiver, voipFilter)
             }
         }
+        runCatching {
+            // Manifest-declared PACKAGE_ADDED receivers are confirmed dead on this Android
+            // build (see PackageInstallWatcher's doc comment) - registered dynamically here
+            // instead, on this already-running service, so delivery doesn't depend on a
+            // background cold-start the OS refuses to allow.
+            val installFilter = IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply {
+                addDataScheme("package")
+            }
+            // PACKAGE_ADDED is a protected system broadcast (confirmed - a spoofed local
+            // broadcast attempt at it throws SecurityException even from adb shell), so
+            // NOT_EXPORTED is safe and tighter here: protection is enforced by the OS refusing
+            // anyone but itself to ever send it, not by this receiver's exported flag.
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(installReceiver, installFilter, RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(installReceiver, installFilter)
+            }
+        }
         registerCallStateListener()
     }
 
@@ -87,6 +105,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { bubbleTts?.shutdown() }
         runCatching { unregisterReceiver(screenStateReceiver) }
         runCatching { unregisterReceiver(voipCallReceiver) }
+        runCatching { unregisterReceiver(installReceiver) }
         unregisterCallStateListener()
         bubbleServiceScope.cancel()
         if (instance === this) instance = null
@@ -104,6 +123,13 @@ class ScifiAccessibilityService : AccessibilityService() {
             announceIncomingCall(
                 if (!callerName.isNullOrBlank()) "Incoming call from $callerName." else "Incoming call${if (!appName.isNullOrBlank()) " on $appName" else ""}."
             )
+        }
+    }
+
+    private val installReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (context == null || intent == null) return
+            PackageInstallWatcher.handle(context, intent)
         }
     }
 

@@ -3,6 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permissions -->
+    <!-- Full package visibility - needed for real reasons beyond just seeing the app drawer
+         (which already works via the OS's separate default-launcher MAIN/LAUNCHER exemption):
+         PackageInstallWatcher's PACKAGE_ADDED receiver was confirmed (via dumpsys package
+         "Queries:" section and live on-device tests) to only fire for a small curated set of
+         packages without this - most real new installs were invisible to it entirely, silently,
+         with no crash or log to explain why. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -267,17 +274,11 @@
             </intent-filter>
         </receiver>
 
-        <!-- New-install monitor: PACKAGE_ADDED is a protected system broadcast, exempt from
-             the Android 8+ implicit-broadcast restrictions, so this fires even when the app
-             isn't running -->
-        <receiver
-            android:name=".PackageInstallWatcher"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.PACKAGE_ADDED" />
-                <data android:scheme="package" />
-            </intent-filter>
-        </receiver>
+        <!-- New-install monitor moved to a dynamically-registered receiver on
+             ScifiAccessibilityService - a manifest-declared receiver here was confirmed (via
+             dumpsys activity broadcasts) to be silently skipped on this Android 16 / One UI
+             build with "Background execution not allowed", the same restriction that also
+             blocks Samsung's own Galaxy Store install receiver. See PackageInstallWatcher.kt. -->
 
         <!-- Fires scheduled device actions (delayed uninstall/download) via AlarmManager -->
         <receiver
