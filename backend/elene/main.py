@@ -325,6 +325,12 @@ is no build/deploy pipeline behind this yet):
   "doing" it - say you've noted a suggestion for them to look at later.
 - Both forms only ever create a proposal awaiting the user's fingerprint - never imply the
   change has already happened.
+- If the user asks a general capability question about this - "can you update yourself?",
+  "can you change your own code?" - answer honestly and completely, not with a flat "no": you
+  cannot autonomously write, build, sign, or deploy code changes yourself (that part genuinely
+  doesn't exist), but you CAN queue a specific proposed change for their fingerprint approval
+  right now if they tell you what they want changed. Don't just state the limitation and stop -
+  always mention the real capability you do have in the same breath.
 
 If you are not fully certain what the user wants (ambiguous request, multiple things it
 could mean, missing information like which contact/app/target), ask a clarifying question
@@ -615,6 +621,84 @@ async def laptop_phone_ws(websocket: WebSocket, token: str) -> None:
         if session.phone is websocket:
             session.phone = None
         await _safe_send_text(session.agent, json.dumps({"type": "phone_disconnected"}))
+
+
+# ---- Phone-to-phone remote control relay (Link to Phone) ----
+# Same pure pass-through shape as the laptop relay above, deliberately kept as a fully separate
+# class/dict/routes rather than reusing LaptopSession - zero shared state means this can't affect
+# the already-working laptop feature. "agent" is the phone being controlled, "controller" is the
+# phone doing the controlling (renamed from the laptop side's "phone" since both ends here are
+# phones and that name would be ambiguous).
+class PhoneSession:
+    def __init__(self) -> None:
+        self.agent: Optional[WebSocket] = None
+        self.controller: Optional[WebSocket] = None
+
+
+PHONE_SESSIONS: Dict[str, PhoneSession] = {}
+
+
+def _phone_session(token: str) -> PhoneSession:
+    return PHONE_SESSIONS.setdefault(token, PhoneSession())
+
+
+async def _phone_relay_loop(websocket: WebSocket, session: PhoneSession, is_agent: bool) -> None:
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            target = session.controller if is_agent else session.agent
+            text = message.get("text")
+            data = message.get("bytes")
+            if text is not None:
+                await _safe_send_text(target, text)
+            elif data is not None:
+                await _safe_send_bytes(target, data)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/phone/ws/agent/{token}")
+async def phone_agent_ws(websocket: WebSocket, token: str) -> None:
+    if len(token) < 12:
+        await websocket.close(code=4001)
+        return
+    await websocket.accept()
+    session = _phone_session(token)
+    session.agent = websocket
+    await _safe_send_text(session.controller, json.dumps({"type": "agent_connected"}))
+    await _safe_send_text(
+        websocket,
+        json.dumps({"type": "controller_connected" if session.controller else "controller_offline"}),
+    )
+    try:
+        await _phone_relay_loop(websocket, session, is_agent=True)
+    finally:
+        if session.agent is websocket:
+            session.agent = None
+        await _safe_send_text(session.controller, json.dumps({"type": "agent_disconnected"}))
+
+
+@app.websocket("/phone/ws/controller/{token}")
+async def phone_controller_ws(websocket: WebSocket, token: str) -> None:
+    if len(token) < 12:
+        await websocket.close(code=4001)
+        return
+    await websocket.accept()
+    session = _phone_session(token)
+    session.controller = websocket
+    await _safe_send_text(
+        websocket,
+        json.dumps({"type": "agent_connected" if session.agent else "agent_offline"}),
+    )
+    await _safe_send_text(session.agent, json.dumps({"type": "controller_connected"}))
+    try:
+        await _phone_relay_loop(websocket, session, is_agent=False)
+    finally:
+        if session.controller is websocket:
+            session.controller = None
+        await _safe_send_text(session.agent, json.dumps({"type": "controller_disconnected"}))
 
 
 @app.post("/tts")

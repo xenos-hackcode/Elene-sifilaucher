@@ -405,6 +405,17 @@ fun SecurityScreen(
                 var voiceBusy by remember { mutableStateOf(false) }
                 var voiceStatus by remember { mutableStateOf<String?>(null) }
                 var showVoiceInfo by remember { mutableStateOf(false) }
+                val voiceDrifting = remember { VoiceIdConfidenceLog.isDrifting(voiceContext) }
+
+                if (voiceDrifting) {
+                    Text(
+                        text = "Voice ID matches have been weaker lately - consider adding a fresh sample below.",
+                        color = Color(0xFFFFA726),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                    )
+                }
 
                 PanelRow(
                     label = if (voiceEnrolled) "Add voice samples" else "Enroll voice",
@@ -425,12 +436,21 @@ fun SecurityScreen(
                                     // 3 takes per style, same as before - just per style now
                                     // instead of one style repeated three times.
                                     for (take in 1..3) {
-                                        voiceStatus = "${style.label} (take $take of 3, " +
-                                            "${style.recordSeconds}s) - say:\n\"${style.prompt}\""
-                                        val sample = recordVoiceSample(
-                                            voiceContext,
-                                            style.recordSeconds * VOICE_SAMPLE_RATE
-                                        )
+                                        var sample: FloatArray? = null
+                                        // A single bad take (late start, mic hiccup, VAD finding
+                                        // no speech) shouldn't nuke the whole 15-take sequence -
+                                        // retry just that take a couple times before giving up.
+                                        var attempt = 0
+                                        while (sample == null && attempt < 3) {
+                                            attempt++
+                                            voiceStatus = (if (attempt == 1) "" else "Didn't catch that clearly - try again.\n") +
+                                                "${style.label} (take $take of 3, " +
+                                                "${style.recordSeconds}s) - say:\n\"${style.prompt}\""
+                                            sample = recordVoiceSample(
+                                                voiceContext,
+                                                style.recordSeconds * VOICE_SAMPLE_RATE
+                                            )
+                                        }
                                         if (sample == null) { failed = true; break }
                                         samples.add(sample)
                                     }

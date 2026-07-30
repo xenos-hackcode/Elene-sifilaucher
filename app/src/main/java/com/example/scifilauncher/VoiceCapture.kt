@@ -79,18 +79,31 @@ suspend fun recordVoiceSample(context: Context, durationSamples: Int = VOICE_SAM
         trimSilenceVad(context, denoised)
     }
 
+/** Below this, a "sample" isn't real speech - a late start, a mic hiccup, or VAD finding
+ * nothing. Far under even the shortest style (SHORT, a 2s recording of one word), so this
+ * only rejects genuinely bad takes, not quiet-but-real ones. */
+private const val MIN_SPEECH_SAMPLES = (300L * VOICE_SAMPLE_RATE / 1000).toInt()
+
 /**
  * Trims leading/trailing silence using Silero VAD's real speech-probability output, rather than
  * a fixed energy threshold that can't tell real speech from a loud room tone. Returns the
  * shorter active-speech region as-is (no zero-padding) since the ECAPA-TDNN model accepts
  * variable-length input natively, and padding would only add meaningless silence frames into
  * the per-utterance mean normalization.
+ *
+ * Returns null - a real capture failure, same as a mic error - when VAD finds no speech at all
+ * or the trimmed region is too short to be a genuine utterance. Previously this fell back to
+ * returning the untrimmed (possibly all-silence) buffer, which meant a bad take - dead air,
+ * VAD failing to catch the recording - got silently embedded and stored as a permanent
+ * reference in the enrollment pool instead of being rejected and retried.
  */
-private fun trimSilenceVad(context: Context, samples: FloatArray): FloatArray {
+private fun trimSilenceVad(context: Context, samples: FloatArray): FloatArray? {
     val chunkSize = 512 // fixed by Silero VAD for 16kHz input
     val chunkCount = samples.size / chunkSize
-    if (chunkCount == 0) return samples
+    if (chunkCount == 0) return null
 
+    // VAD itself being unavailable (model load failure) is a different situation from VAD
+    // running and finding nothing - don't fail capture over that, just skip trimming.
     val vad = runCatching { SileroVad(context) }.getOrNull() ?: return samples
     val speechProb = FloatArray(chunkCount)
     try {
@@ -105,7 +118,7 @@ private fun trimSilenceVad(context: Context, samples: FloatArray): FloatArray {
     val threshold = 0.5f
     var firstActive = speechProb.indexOfFirst { it >= threshold }
     var lastActive = speechProb.indexOfLast { it >= threshold }
-    if (firstActive < 0 || lastActive < 0) return samples
+    if (firstActive < 0 || lastActive < 0) return null
 
     val padChunks = 3
     firstActive = maxOf(0, firstActive - padChunks)
@@ -113,5 +126,6 @@ private fun trimSilenceVad(context: Context, samples: FloatArray): FloatArray {
 
     val speechStart = firstActive * chunkSize
     val speechEnd = minOf(samples.size, (lastActive + 1) * chunkSize)
-    return samples.copyOfRange(speechStart, speechEnd)
+    val trimmed = samples.copyOfRange(speechStart, speechEnd)
+    return if (trimmed.size < MIN_SPEECH_SAMPLES) null else trimmed
 }

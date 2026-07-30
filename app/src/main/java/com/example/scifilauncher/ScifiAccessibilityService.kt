@@ -826,7 +826,9 @@ class ScifiAccessibilityService : AccessibilityService() {
             val best = VoiceIdManager.verifyBest(this@ScifiAccessibilityService, sample) ?: return true
             val (style, score) = best
             android.util.Log.d("EleneVoiceID", "heard=\"$heard\" style=${style.name} similarity=$score")
-            return score >= style.threshold
+            val passed = score >= style.threshold
+            VoiceIdConfidenceLog.record(this@ScifiAccessibilityService, style, score, passed)
+            return passed
         } finally {
             voiceIdCheckInProgress = false
         }
@@ -1408,6 +1410,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return runCatching { startActivity(launchIntent); true }.getOrDefault(false)
     }
+
 
     @Suppress("DEPRECATION")
     private fun openAppByLabel(query: String): Boolean {

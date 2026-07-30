@@ -38,6 +38,7 @@ fun SettingsScreen(
     onOpenMoreApps: () -> Unit,
     onOpenCapabilities: () -> Unit,
     onOpenMemory: () -> Unit,
+    onRequestBiometricForWifiPassword: (onSuccess: () -> Unit) -> Unit,
     onDarkModeChange: (DarkModeOption) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -148,6 +149,95 @@ fun SettingsScreen(
                         showDivider = false,
                         onClick = { showFontSizePanel = true }
                     )
+                }
+
+                PanelSection(title = "NETWORK", themeColor = themeColor) {
+                    var wifiStatus by remember { mutableStateOf(currentWifiStatus(context)) }
+                    var revealedPassword by remember { mutableStateOf<String?>(null) }
+                    var revealFailReason by remember { mutableStateOf<String?>(null) }
+                    var showWifiInfo by remember { mutableStateOf(false) }
+
+                    PanelRow(
+                        label = "Wi-Fi",
+                        themeColor = themeColor,
+                        value = wifiStatus.ssid ?: "Not connected",
+                        onInfoClick = { showWifiInfo = true },
+                        onClick = { wifiStatus = currentWifiStatus(context) }
+                    )
+                    if (wifiStatus.connected) {
+                        PanelRow(
+                            label = "Signal / speed",
+                            themeColor = themeColor,
+                            value = listOfNotNull(
+                                wifiStatus.rssiDbm?.let { "${it}dBm" },
+                                wifiStatus.linkSpeedMbps?.let { "${it}Mbps" }
+                            ).joinToString(" · ").ifBlank { "-" },
+                            onClick = {}
+                        )
+                        PanelRow(
+                            label = "IP address",
+                            themeColor = themeColor,
+                            value = wifiStatus.ipAddress ?: "-",
+                            onClick = {}
+                        )
+                        PanelRow(
+                            label = "Reveal password",
+                            themeColor = themeColor,
+                            value = when {
+                                revealedPassword != null -> revealedPassword!!
+                                revealFailReason != null -> "Unavailable"
+                                else -> "Tap to reveal"
+                            },
+                            showDivider = false,
+                            onClick = {
+                                if (revealedPassword != null || revealFailReason != null) {
+                                    // Already shown - tapping again hides it rather than
+                                    // leaving a saved password sitting on screen indefinitely.
+                                    revealedPassword = null
+                                    revealFailReason = null
+                                    return@PanelRow
+                                }
+                                onRequestBiometricForWifiPassword {
+                                    when (val result = currentWifiPassword(context)) {
+                                        is WifiPasswordResult.Found -> revealedPassword = result.password
+                                        is WifiPasswordResult.Unavailable -> revealFailReason = result.reason
+                                    }
+                                }
+                            }
+                        )
+                        revealFailReason?.let {
+                            Text(
+                                text = it,
+                                color = Color.Gray,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                            )
+                        }
+                    }
+                    if (showWifiInfo) {
+                        AlertDialog(
+                            onDismissRequest = { showWifiInfo = false },
+                            confirmButton = {
+                                TextButton(onClick = { showWifiInfo = false }) {
+                                    Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                }
+                            },
+                            title = { Text("Wi-Fi", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text(
+                                    "Shows the currently connected network. \"Reveal password\" reads " +
+                                        "the saved password for that network from Android's own Wi-Fi " +
+                                        "config store - only possible because this app is enrolled as " +
+                                        "this device's Device Owner, which keeps access ordinary apps " +
+                                        "lost in Android 10+. Needs your fingerprint first, and only " +
+                                        "works for networks actually saved on this device.",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        )
+                    }
                 }
 
                 PanelSection(title = "SYSTEM & BEHAVIOR", themeColor = themeColor) {

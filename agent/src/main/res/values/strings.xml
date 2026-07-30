@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Phone Link Agent</string>
+    <string name="accessibility_service_description">Lets a linked device you\'ve paired with tap, swipe, and type on this phone. Only active while you\'re linked - disconnect anytime from the app.</string>
+</resources>

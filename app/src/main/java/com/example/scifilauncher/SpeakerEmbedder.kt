@@ -20,6 +20,14 @@ const val VOICE_EMBEDDING_DIM = 192
  * SpeakerFbank/kaldi-native-fbank), not raw audio - input/output shapes and the exact feature
  * pipeline (hamming window, no dither, per-utterance mean normalization) were confirmed against
  * wespeaker's own inference reference and the downloaded model's real ONNX metadata, not assumed.
+ *
+ * The bundled asset has its Gemm/MatMul layers (attention pooling + final FC) dynamically
+ * INT8-quantized (ONNX Runtime `quantize_dynamic`, per-channel weights) - Conv layers are left
+ * float32 since dynamic quantization of Conv produces ConvInteger ops that this ORT build's
+ * CPUExecutionProvider doesn't implement, and static/QDQ quantization of the Conv backbone
+ * needs real calibration audio to be safe for a model that gates real authentication, which
+ * wasn't done here. Verified via synthetic-input cosine similarity (0.999+ vs. float32) before
+ * shipping; still needs a real on-device enroll/verify check against actual speech.
  */
 class SpeakerEmbedder(context: Context) {
     private val env = OrtEnvironment.getEnvironment()

@@ -274,6 +274,158 @@
   Shipping that text would have made Elene misrepresent the app's real security posture to the
   user. Not added; main.py unchanged from this specific request.
 
+- (2026-07-27) Real audio-pipeline improvements. Discovered during research that two of the four
+  requested items (WebRTC AEC / RNNoise, ECAPA quantization) were already partly built earlier in
+  this same long session but not captured in this log: VoiceCapture.kt already applies a real
+  Android AcousticEchoCanceler and a real RNNoise C library (app/src/main/cpp/rnnoise, JNI) to the
+  Voice ID capture path, and SpeakerEmbedder.kt already uses ECAPA-TDNN via ONNX Runtime with
+  multi-sample-pool enrollment (already the "improved enrollment strategy" ask, in part). Confirmed
+  the one true architectural wall: AEC/RNNoise can't reach the main conversational SpeechRecognizer
+  pipeline (the 500ms-delay hack) because SpeechRecognizer owns its own internal mic capture with
+  no raw-audio hook for the app - user chose to keep the delay hack rather than replace
+  SpeechRecognizer with a custom capture pipeline (real regression risk to the most bug-prone part
+  of this app for a smaller win). What was actually built this pass: (1) ECAPA-TDNN model
+  dynamically INT8-quantized on its Gemm/MatMul layers only (attention pooling + final FC) via
+  ONNX Runtime's quantize_dynamic - Conv layers left float32 since dynamic quantization of Conv
+  produces ConvInteger ops this ORT build's CPU EP doesn't implement (confirmed by a real failure,
+  not assumed), and static/QDQ quantization of the Conv backbone would need real calibration audio
+  to be safe for a model gating actual authentication, which wasn't pursued this pass. 24.86MB ->
+  21.94MB (11.8% smaller), 0.999+ cosine similarity vs. float32 on synthetic inputs - safe,
+  verified pre-ship, but still needs a real on-device enroll/verify check against actual speech.
+  (2) Fixed a real correctness gap in VoiceCapture.kt's trimSilenceVad: previously, if Silero VAD
+  found zero speech in a take (mic hiccup, late start, dead air), it silently fell back to
+  returning the full untrimmed (possibly all-silence) buffer instead of failing - meaning a bad
+  take could get permanently embedded into the enrollment reference pool. Now returns null (a real
+  capture failure) when no speech is found or the trimmed region is under 300ms. (3) Enrollment in
+  SecurityScreen.kt now retries an individual bad take up to 2 extra times instead of aborting the
+  whole 15-take (5 style x 3 take) sequence on one bad take. (4) New VoiceIdConfidenceLog - logs
+  score/pass-fail from the two real production verify() call sites (ScifiAccessibilityService's
+  command gate, MainActivity's confirmation voice-match) but deliberately not the Security screen's
+  manual "Test voice match" button, so real-world drift isn't biased by test conditions; a UI nudge
+  now shows in Settings > Voice ID when 3+ of the last 5 real attempts failed. Builds clean,
+  installs with no crash (confirmed via logcat). Also added, same pass: a NETWORK section at the
+  top of Settings showing connected SSID/signal/link-speed/IP, plus a fingerprint-gated "Reveal
+  password" using WifiManager.getConfiguredNetworks()/preSharedKey - AOSP carries an explicit
+  exception letting Device Owner apps read this where ordinary apps get an empty/redacted result
+  since Android 10; this app is Device Owner, so it should work, but this specific OEM-build
+  behavior (Android 16 / One UI) has NOT been confirmed live yet. **Not yet confirmed live**:
+  quantized-model real accuracy (only synthetic-input verified), the bad-take rejection/retry
+  actually triggering on a genuine bad take, the drift nudge actually appearing after real repeated
+  failures, and the WiFi password reveal actually working on this specific device/OS build.
+
+- (2026-07-28) Link to Phone built - phone-to-phone remote control mirroring the already-working
+  Link to Laptop feature (token-keyed WebSocket relay through the same Cloud Run backend). Backend:
+  new PhoneSession/PHONE_SESSIONS dict + /phone/ws/agent/{token} + /phone/ws/controller/{token}
+  routes (main.py), fully isolated from LaptopSession/LAPTOP_SESSIONS - zero shared state, no
+  changes to the existing laptop routes. Deployed (revision elene-backend-00029-dxz for the
+  routes, elene-backend-00030-vbc for a separate small prompt fix done in the same window - see
+  below). Android agent role (the phone being controlled): reuses ScreenPerceptionService's
+  existing loop-mode capture completely unchanged except for one addition - a new "linkphone"
+  capture mode purely for accurate foreground-notification text ("A linked device can see and
+  control this phone" instead of the misleading "Elene is looking at your screen"). Orchestration
+  (WebSocket connection, frame-request timer, command dispatch) lives in
+  ScifiAccessibilityService.kt, consistent with this codebase's established pattern that
+  ScifiAccessibilityService owns orchestration while ScreenPerceptionService stays a "dumb"
+  capture box - reused tapAt/swipeCoords/typeText/goBack/goHome/openRecents directly, all of
+  which already existed from the screen-perception game-loop feature. Mandatory disclosure screen
+  (PhoneLinkAgentScreen) gates everything - no pairing token/QR is reachable until acknowledged;
+  Accessibility Service and MediaProjection consent are both real, unbypassed system-level grants;
+  "Log out" in Settings > "Linked device access" disconnects and regenerates the token so an old
+  shared QR/code can't silently reconnect later. Controller role (PhoneControlScreen) mirrors
+  LaptopControlScreen's LiveControl but with direct touch-to-touch mapping (tap->tap, drag->swipe)
+  instead of faking a desktop cursor - genuinely simpler than the laptop case. QR generation used
+  zxing-core's QRCodeWriter, already a transitive dependency (only the scanning side, via the
+  journeyapps wrapper, was used before) - no new dependency needed. Builds clean, installs with no
+  crash (confirmed via logcat - clean process restart, no FATAL/AndroidRuntime exceptions).
+  **Not yet confirmed live**: the actual two-device pairing/streaming/command-dispatch flow -
+  this needs a second real Android device (or emulator) to test end to end, which wasn't available
+  this pass. Also not yet manually verified on this device: the disclosure screen's real
+  unskippability, the Accessibility Service deep-link, and the QR/token actually rendering
+  correctly - only confirmed via code review and a clean install, not a real walkthrough.
+
+- (2026-07-28) Small backend prompt fix: Elene had no instruction for how to answer a general
+  capability question like "can you update yourself?" - the propose_update prompt block only
+  covered specific change requests ("add X") and her own proactive suggestions, not the meta
+  question about whether the capability exists at all. Confirmed via the user reporting she
+  answered with a flat "no" (not yet independently verified against a raw transcript, but the gap
+  in the prompt is real and visible by inspection). Added an explicit instruction: answer
+  honestly that she can't autonomously write/build/deploy code, but always mention in the same
+  breath that she can queue a specific proposed change for fingerprint approval if asked. Small,
+  independent fix, deployed same session as the Link to Phone backend routes (revision
+  elene-backend-00030-vbc). **Not yet confirmed live**: whether she now actually gives the fuller
+  answer when asked the same capability question again.
+
+- (2026-07-28) Two real bugs found via the user's live testing of the same-day work above, both
+  fixed and confirmed to at least build/install clean (behavior itself not yet re-verified live):
+  (1) WiFi "Reveal password" was showing something hash-like, not the real password. Root-caused
+  with real evidence, not guessed - `adb shell dumpsys wifi` on this device showed
+  `PSK/SAE: *` for the actually-connected network, i.e. even Android's own privileged system dump
+  redacts it. This means the "Device Owner apps keep access to preSharedKey" assumption from
+  earlier the same day was incomplete - it appears to only hold for networks the app itself
+  added, not ones configured through the normal system Wi-Fi UI (which is virtually always the
+  case for a real daily-driver phone). `WifiConfiguration.preSharedKey` can also legitimately come
+  back as an unquoted 64-character hex string - the PBKDF2-derived PSK, a real value but not the
+  human-typed password and not reversible into one. WifiStatus.kt now detects both cases (the "*"
+  placeholder and the hex-PSK shape) and reports honestly ("Android hides this..." /
+  "only a derived key is stored...") instead of displaying wrong data as if correct.
+  (2) Bigger one: Link to Phone's agent role ("Linked device access") was built directly into this
+  same app's own Settings screen - meaning the user's OWN daily-driver phone could be put into
+  "controllable by whoever has the pairing code" mode. That's backwards from what was actually
+  wanted: the agent role is meant to ship as a separate, minimal APK sent to *other* people's
+  phones, so the user's primary phone only ever holds the controller role. Immediate fix: pulled
+  the "Linked device access" row out of SettingsScreen.kt entirely - there's now no UI path to
+  reach the agent role from the main app at all. The underlying PhoneLinkAgentScreen/
+  ScifiAccessibilityService agent-role code was left in place (not deleted) since it's needed for
+  the real fix - a genuinely separate minimal installable app - which hasn't been scoped/built yet
+  as of this entry. Both fixes build clean, install with no crash (confirmed via logcat). **Not
+  yet confirmed live**: that the honest Wi-Fi-password-unavailable messages actually display
+  correctly, and (the bigger one) the actual separate agent-only APK doesn't exist yet at all.
+
+- (2026-07-28) Link to Phone agent role extracted into a genuinely separate, minimal app -
+  new `:agent` Gradle module (`agent/`), own `build.gradle.kts` with `applicationId =
+  "com.example.phonelinkagent"`, fully independent from `com.example.scifilauncher`. Real,
+  confirmed reason this had to be a separate module and not a product flavor of the same `app`
+  module: `app/build.gradle.kts` pulls in `onnxruntime-android` (ECAPA-TDNN Voice ID) and a
+  native CMake build (RNNoise/Speex) that aren't easily excludable per-flavor since the native
+  build is module-wide - a flavor would have shipped all of that to a stranger's phone anyway.
+  Confirmed the size difference is real, not assumed: agent-debug.apk is 9.58MB vs.
+  app-debug.apk's 69.5MB (~7x smaller) after both built clean.
+  Copied as-is (self-contained, no SciFiLauncher-specific dependencies): PhoneLinkAgentClient.kt,
+  QrCodeGenerator.kt, PhoneLinkAgentScreen.kt (package renamed, disclosure text updated to
+  reference this app's own Log Out button instead of "Settings > Linked device access" which
+  doesn't exist in this minimal app). New, extracted-and-trimmed: PhoneLinkAccessibilityService.kt
+  (just tapAt/swipeCoords/typeText/goBack/goHome/openRecents plus the phone-link session
+  orchestration - none of ScifiAccessibilityService's ~1400 lines of unrelated Elene/WhatsApp/
+  Sequence-Mode logic came along), ScreenCaptureService.kt (continuous-capture-only, no
+  single-shot/game-loop modes since this app never needs those), a new minimal MainActivity.kt.
+  New manifest deliberately has no `android.intent.category.HOME` and no Device Admin receiver -
+  confirmed live via `adb shell dumpsys package com.example.phonelinkagent`, which showed only
+  `category.LAUNCHER` in the Activity Resolver Table and no DEVICE_ADMIN entry anywhere in the
+  dump. Corresponding cleanup in the main `app` module: removed the whole agent-role block from
+  ScifiAccessibilityService.kt, reverted the "linkphone" mode addition to
+  ScreenPerceptionService.kt back to its original state, removed the token/disclosure/screen-state
+  wiring from MainActivity.kt, removed the now-unused `onOpenPhoneLinkAgent` param from
+  SettingsScreen.kt, deleted the two now-relocated files from the app module's source set. Real
+  bug caught and fixed along the way: MainActivity.kt's `onResume()` override was a literal no-op
+  that didn't actually update any state - `LaunchedEffect(Unit)` only runs once on first
+  composition, not on every resume, so the original draft would never have picked up the user
+  turning on Accessibility Service in system Settings and coming back. Fixed by hoisting
+  `accessibilityOnState` to a class-level `mutableStateOf` field `onResume()` can actually write
+  to. Both `:agent:assembleDebug` and `:app:assembleDebug` build clean; both install with no
+  crash (confirmed via logcat) alongside each other on this device (different applicationIds).
+  Separately this same session: fixed the WiFi "Reveal password" feature, which was showing a
+  hash-like value instead of the real password - root-caused with real evidence
+  (`adb shell dumpsys wifi` showed `PSK/SAE: *` even in Android's own privileged system dump for
+  a network added through the normal system Wi-Fi UI), revealing the earlier "Device Owner apps
+  keep preSharedKey access" assumption only holds for networks the app itself added. WifiStatus.kt
+  now detects the "*" redaction placeholder and the unquoted-64-hex-char derived-PSK shape and
+  reports honestly instead of displaying wrong data as if it were the real password.
+  **Not yet confirmed live**: the actual two-device pairing/streaming/command-dispatch flow for
+  the extracted agent app (needs a second real Android device, not available this pass), the
+  disclosure screen's real content on-device (only confirmed via code + manifest facts, not a
+  visual walkthrough), and the honest Wi-Fi-password-unavailable messages actually displaying
+  correctly in the Settings UI.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

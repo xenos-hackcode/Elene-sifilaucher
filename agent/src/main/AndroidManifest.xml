@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Phone Link Agent"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- A normal launchable app - deliberately NOT android.intent.category.HOME (this must
+             never be offered as a home-screen replacement) and no Device Admin receiver of any
+             kind. Just an ordinary app someone installs, opens once to set up, then it runs in
+             the background until they log out from within it. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="Phone Link Agent">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".PhoneLinkAccessibilityService"
+            android:label="Phone Link Agent"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/phone_link_accessibility_service_config" />
+        </service>
+
+        <service
+            android:name=".ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+    </application>
+</manifest>

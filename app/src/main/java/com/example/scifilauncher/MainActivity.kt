@@ -264,6 +264,21 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         getSharedPreferences("laptop_control_prefs", MODE_PRIVATE).edit().remove("token").apply()
     }
 
+    // Link to Phone - controller role (this phone controlling another). Separate prefs file
+    // from the agent role below - the same physical phone could plausibly use both roles at
+    // different times, and they must never share state.
+    private fun loadPhoneControlToken(): String? =
+        getSharedPreferences("phone_control_prefs", MODE_PRIVATE).getString("token", null)
+
+    private fun savePhoneControlToken(token: String) {
+        getSharedPreferences("phone_control_prefs", MODE_PRIVATE).edit().putString("token", token).apply()
+    }
+
+    private fun forgetPhoneControlToken() {
+        getSharedPreferences("phone_control_prefs", MODE_PRIVATE).edit().remove("token").apply()
+    }
+
+
     private val nearbyDevicesPermissionLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
     ) { /* NearbyDevicesScreen re-reads hasNearbyDevicesPermissions() on recompose */ }
@@ -1038,6 +1053,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showNearbyDevices by rememberSaveable { mutableStateOf(false) }
                 var showLaptopControl by rememberSaveable { mutableStateOf(false) }
                 var laptopTokenState by rememberSaveable { mutableStateOf(loadLaptopToken()) }
+                var showPhoneControl by rememberSaveable { mutableStateOf(false) }
+                var phoneControlTokenState by rememberSaveable { mutableStateOf(loadPhoneControlToken()) }
                 var showInstallFlags by rememberSaveable { mutableStateOf(false) }
                 var showCapabilities by rememberSaveable { mutableStateOf(false) }
                 var showMemory by rememberSaveable { mutableStateOf(false) }
@@ -2099,6 +2116,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSettings = false
                                     showMemory = true
                                 },
+                                onRequestBiometricForWifiPassword = { onSuccess ->
+                                    showBiometricPrompt(
+                                        title = "Wi-Fi password",
+                                        subtitle = "Verify it's really you before revealing this",
+                                        onSuccess = onSuccess,
+                                        onFailure = {}
+                                    )
+                                },
                                 onDarkModeChange = { mode ->
                                     // SettingsScreen keeps its own local copy for its own
                                     // recomposition, but the M3 theme (AlertDialog colors,
@@ -2573,6 +2598,24 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             )
                         }
 
+                        showPhoneControl -> {
+                            PhoneControlScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                savedToken = phoneControlTokenState,
+                                onSaveToken = { token ->
+                                    savePhoneControlToken(token)
+                                    phoneControlTokenState = token
+                                },
+                                onForgetToken = {
+                                    forgetPhoneControlToken()
+                                    phoneControlTokenState = null
+                                },
+                                onScanQr = { onResult -> launchQrScan(onResult) },
+                                onBack = { showPhoneControl = false }
+                            )
+                        }
+
                         showFreezer -> {
                             val frozenApps = visibleApps.filter { it.packageName in hiddenApps }
                             FreezerScreen(
@@ -2703,7 +2746,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                             val sample = recordVoiceSample(this@MainActivity)
                                             val best = sample?.let { VoiceIdManager.verifyBest(this@MainActivity, it) }
                                             if (best != null) {
-                                                ActionLog.recordVoiceMatch(this@MainActivity, confId, best.second)
+                                                val (style, score) = best
+                                                ActionLog.recordVoiceMatch(this@MainActivity, confId, score)
+                                                VoiceIdConfidenceLog.record(this@MainActivity, style, score, score >= style.threshold)
                                             }
                                         }
                                     }
@@ -2940,6 +2985,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onOpenLaptopLink = {
                                     showQuickSettingsPanel = false
                                     showLaptopControl = true
+                                },
+                                onOpenPhoneControl = {
+                                    showQuickSettingsPanel = false
+                                    showPhoneControl = true
                                 },
                                 onToggleScreenRecord = {
                                     if (screenRecordingState) {
