@@ -21,9 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 fun formatShortTime(millis: Long): String {
     val sdf = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault())
@@ -97,6 +100,7 @@ fun StorageScreen(
 @Composable
 private fun IntruderCaptureRow(entry: IntruderCapture, themeColor: Color, textColor: Color) {
     var expanded by remember { mutableStateOf(false) }
+    var fullscreenPhoto by remember { mutableStateOf(false) }
     val photoBitmap = remember(entry.photoPath) {
         entry.photoPath?.let { path -> runCatching { BitmapFactory.decodeFile(path) }.getOrNull() }
     }
@@ -104,21 +108,21 @@ private fun IntruderCaptureRow(entry: IntruderCapture, themeColor: Color, textCo
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
             .padding(vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (photoBitmap != null) {
                 Image(
                     bitmap = photoBitmap.asImageBitmap(),
-                    contentDescription = "Captured photo",
+                    contentDescription = "Captured photo - tap to view full size",
                     modifier = Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(6.dp))
+                        .clickable { fullscreenPhoto = true }
                 )
                 Spacer(Modifier.width(10.dp))
             }
-            Column {
+            Column(modifier = Modifier.clickable { expanded = !expanded }) {
                 Text(
                     text = entry.reason,
                     color = textColor,
@@ -157,6 +161,28 @@ private fun IntruderCaptureRow(entry: IntruderCapture, themeColor: Color, textCo
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(top = 6.dp)
             )
+        }
+    }
+
+    if (fullscreenPhoto && photoBitmap != null) {
+        Dialog(
+            onDismissRequest = { fullscreenPhoto = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { fullscreenPhoto = false },
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    bitmap = photoBitmap.asImageBitmap(),
+                    contentDescription = "Captured photo, full size",
+                    modifier = Modifier.fillMaxWidth(),
+                    contentScale = ContentScale.Fit
+                )
+            }
         }
     }
 }

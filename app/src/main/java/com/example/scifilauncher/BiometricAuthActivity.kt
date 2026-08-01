@@ -26,6 +26,9 @@ class BiometricAuthActivity : FragmentActivity() {
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (intent.getStringExtra(EXTRA_REASON) == REASON_MOTION_CONFIRM) {
+                        MotionTheftDetector.onConfirmed(applicationContext)
+                    }
                     setResult(RESULT_OK)
                     finish()
                 }
@@ -77,10 +80,21 @@ class BiometricAuthActivity : FragmentActivity() {
         runCatching { captureLastLocation(applicationContext, lockPrefs) }
         val loc = loadLastKnownLocation(lockPrefs)
         IntruderCaptureLog.record(applicationContext, photoPath, loc?.first, loc?.second, reason)
+
+        // Real auto-arm trigger: N failed fingerprint scans in a short window is a direct
+        // "someone who isn't the owner is trying to use this phone" signal - doesn't need a
+        // confirm-or-arm grace period the way the weaker motion trigger does, since a genuine
+        // owner doesn't fail their own fingerprint repeatedly in a few minutes.
+        if (!isSequenceModeActive(lockPrefs) && shouldAutoArmFromFailedAttempts(applicationContext)) {
+            SystemEventLog.record(applicationContext, "SequenceMode", "Auto-armed: repeated failed fingerprint attempts")
+            enterSequenceMode(applicationContext, lockPrefs)
+        }
     }
 
     companion object {
         const val EXTRA_TITLE = "com.example.scifilauncher.extra.BIOMETRIC_TITLE"
         const val EXTRA_SUBTITLE = "com.example.scifilauncher.extra.BIOMETRIC_SUBTITLE"
+        const val EXTRA_REASON = "com.example.scifilauncher.extra.BIOMETRIC_REASON"
+        const val REASON_MOTION_CONFIRM = "motion_confirm"
     }
 }

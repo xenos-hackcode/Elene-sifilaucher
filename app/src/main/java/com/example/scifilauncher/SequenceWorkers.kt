@@ -55,6 +55,23 @@ class SequenceAlertWorker(context: Context, params: WorkerParameters) : Coroutin
     }
 }
 
+/** One-shot, 10 minutes after MotionTheftDetector's "are you running?" alert - arms Sequence
+ * Mode for real only if the owner never confirmed via fingerprint in that window. A no-op if
+ * the alert was already resolved (confirmed, or Sequence Mode got armed some other way meanwhile). */
+class MotionConfirmTimeoutWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val lockPrefs = applicationContext.getSharedPreferences("lock_prefs", Context.MODE_PRIVATE)
+        if (!isMotionAlertPending(lockPrefs)) return Result.success()
+
+        resolveMotionAlert(lockPrefs)
+        if (!isSequenceModeActive(lockPrefs)) {
+            SystemEventLog.record(applicationContext, "SequenceMode", "Motion alert not confirmed in time - auto-arming")
+            enterSequenceMode(applicationContext, lockPrefs)
+        }
+        return Result.success()
+    }
+}
+
 /** One-shot, ~30 days after Sequence Mode started - wipes protected app data if never recovered. */
 class SequenceWipeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {

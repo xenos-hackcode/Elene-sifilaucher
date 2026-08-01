@@ -253,6 +253,10 @@ Rules:
   ("looks like you opened X most recently" rather than claiming to know total play time). If
   installed_apps is missing from the context, you genuinely don't have that list - say so
   rather than guessing at what might be installed.
+- If the user asks about the weather, the internal context's current_weather field (real, from
+  the phone's own last-known location and a real weather API) answers this directly. If it's
+  missing from the context, you genuinely don't have it right now - say so plainly rather than
+  making up a forecast.
 - General principle: prefer commands that work locally on the device (no API key, no new
   integration) over anything that would need a new external service, whenever a simple local
   answer/action is possible - world_clock is a good example of this.
@@ -367,6 +371,12 @@ Always return valid JSON. Do not add explanations outside JSON.
         )
     if ctx.get("in_meeting"):
         internal_bits.append(f"in_meeting: true, current_meeting_title: {ctx.get('current_meeting_title', '')}")
+    if ctx.get("current_weather"):
+        internal_bits.append(
+            f"current_weather (real, from the phone's own last-known location, refreshed at "
+            f"most every 30 min - use it naturally for weather questions, don't narrate "
+            f"consulting it): {ctx['current_weather']}"
+        )
 
     full_user_content = user_msg
     if internal_bits:

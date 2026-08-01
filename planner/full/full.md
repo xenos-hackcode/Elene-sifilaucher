@@ -465,3 +465,62 @@ system that had already been debugged twice, the honest call was to remove it ou
 the fingerprint gates that were never the problem in the first place — Elene's device-action
 confirmations, Voice ID, and Sequence Mode's exit — to carry the actual security weight going
 forward.
+
+## Addendum (2026-07-30) — everything built since this doc was written
+
+*This document was written 2026-07-26 and deliberately left as a historical snapshot rather than
+rewritten wholesale, since a full rewrite risked losing detail that's still accurate. Everything
+below happened after it was written; for the real day-by-day account with root causes and what's
+still unconfirmed, `planner/experience/experience.md` is authoritative — this is just a summary
+pointer so this file doesn't read as if nothing happened since. Almost none of it has a real
+on-device confirmed result yet; see `planner/in_progress/in_progress.md` for the live checklist.*
+
+- **Screen perception + turn-based game auto-play** (`describe_screen`/`play_game`/`stop_game`):
+  Elene can now request a real screenshot description and attempt to auto-play a simple turn-based
+  game via tap coordinates, gated behind the same MediaProjection consent every screen-recording
+  flow already uses. Two real bugs found via live testing and fixed: the still-open mic picking up
+  the OEM's own "screen sharing started" confirmation chime as a spoken command, and WhatsApp
+  contact taps landing on the avatar (opening a profile picture) instead of the chat row.
+- **Updates screen** (Settings/Security > Activity > Updates): Stage 1 of self-updating Elene — a
+  fingerprint-gated approval queue for proposed changes, reusing the existing device-action
+  confirmation flow. Deliberately stops at "queue for approval" — no code-generation/build/deploy
+  pipeline exists behind an approved entry yet.
+- **Sandbox**: an `android:isolatedProcess="true"` isolated process added as defense-in-depth for
+  verifying Shizuku shell commands before they run, stronger than the prior crash-only isolation.
+- **Sequence Mode force-open (Option A)**: a narrow, automated-only keyguard bypass
+  (`setKeyguardDisabled()`) scoped tightly to the exact span a Sequence Mode WhatsApp alert needs
+  the screen, restored the instant that send completes — not a standing bypass.
+- **Batch of four**: real traffic-proxy routing (`VpnService.setHttpProxy()`, for a laptop-run
+  mitmproxy/Burp instance — this app deliberately doesn't reimplement packet inspection itself);
+  keep-screen-on while actively talking to Elene; research-only conclusion that a full on-device
+  LLM isn't advisable on this phone's hardware, a lightweight intent classifier would be the right
+  future approach instead; and a Memory feature (`remember_fact`, separate from the `avoid_topics`
+  denylist) specifically to survive the backend's own in-memory conversation history resetting on
+  Cloud Run recycle.
+- **Intruder Attempts rebuilt for real**: the old version was confirmed dead code with no photo/
+  location capture at all. New: a headless front-camera single-shot + location, triggered
+  specifically on a failed (not cancelled) fingerprint scan, displayed in Security > Storage.
+  Memory also got a recency-wins fix for contradicting facts.
+- **"Hey Elene" always-listening wake word** (Settings, off by default): approximated via repeating
+  ~4s `SpeechRecognizer` cycles rather than a real low-power wake-word model, since Android exposes
+  no such primitive to apps — disclosed honestly in the toggle's own info dialog. Explicitly backs
+  off during battery saver.
+- **Real audio-pipeline work**: the ECAPA-TDNN speaker model INT8-quantized (24.86MB → 21.94MB,
+  0.999+ cosine similarity vs. float32 on synthetic input), a real correctness bug fixed in Voice
+  ID's VAD-trim fallback (a take with zero detected speech no longer silently gets embedded into
+  the enrollment pool), enrollment retry for a bad take instead of aborting the whole sequence, and
+  a new `VoiceIdConfidenceLog` with a Settings nudge after repeated real-world verify failures.
+  Confirmed the one architectural wall found: `SpeechRecognizer` owns its own mic capture with no
+  raw-audio hook, so AEC/RNNoise still can't reach the main conversational listening path — the
+  500ms post-TTS delay hack was kept rather than replacing `SpeechRecognizer` outright.
+- **Link to Phone**: phone-to-phone remote control, mirroring the existing Link to Laptop feature
+  over the same Cloud Run relay. After a real bug was caught in live testing — the controllable
+  "agent" role had been built directly into this same daily-driver app, meaning the user's own
+  primary phone could be put into "controllable by whoever has the pairing code" mode — the agent
+  role was fully extracted into a separate, minimal Gradle module/app (`agent/`,
+  `com.example.phonelinkagent`, ~7x smaller APK, no Device Admin, no HOME launcher category). This
+  app (`com.example.scifilauncher`) now only ever holds the controller role.
+- Also fixed: WiFi "Reveal password" was showing a hash-like derived value instead of the real
+  password — root-caused to Android redacting `preSharedKey` for networks not added by this app
+  specifically (even in privileged `dumpsys wifi` output); it now reports honestly instead of
+  showing wrong data as if correct.

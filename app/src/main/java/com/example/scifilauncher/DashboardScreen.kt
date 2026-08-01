@@ -71,8 +71,27 @@ fun DashboardScreen(
         }
     }
 
-    // WEATHER placeholder
+    // WEATHER - real data via WeatherClient (Open-Meteo, free/no key) + the phone's own
+    // last-known location, same source Elene's chat context now uses. Was a dead hardcoded
+    // placeholder before ("--°C CLEAR", never actually updated) - a real, silent gap found via
+    // the user directly pointing at it on-device, not something caught by a clean build.
     var weatherText by remember { mutableStateOf("--°C CLEAR") }
+    val lockPrefsForWeather = remember {
+        context.getSharedPreferences("lock_prefs", android.content.Context.MODE_PRIVATE)
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching {
+                captureLastLocation(context, lockPrefsForWeather)
+                val loc = loadLastKnownLocation(lockPrefsForWeather)
+                    ?: requestAndCacheFreshLocation(context, lockPrefsForWeather)
+                loc?.let { (lat, lng, _) ->
+                    WeatherClient.currentWeatherDescription(lat, lng)?.let { desc -> weatherText = desc }
+                }
+            }
+            delay(15 * 60_000L)
+        }
+    }
 
     // RADIO / SYSTEM STATE
     val wifiManager = runCatching {

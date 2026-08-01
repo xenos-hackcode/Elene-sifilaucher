@@ -1,4 +1,24 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.KeyStore
+import java.security.MessageDigest
+
+/** SHA-256 of the debug keystore's signing certificate, hex-encoded lowercase, no separators -
+ * matches the format AppIntegrityCheck.kt computes at runtime from the installed APK. Reads the
+ * keystore directly via the JVM's own KeyStore API rather than shelling out to `keytool` and
+ * parsing its human-readable output, since that format isn't a stable contract. Returns an
+ * empty string (not a crash) if the keystore doesn't exist yet at configuration time - a fresh
+ * checkout's first build - so the runtime check treats "couldn't compute at build time" as
+ * "don't false-positive" rather than failing the build. */
+fun debugCertSha256(): String {
+    val keystoreFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
+    if (!keystoreFile.exists()) return ""
+    return runCatching {
+        val ks = KeyStore.getInstance("JKS")
+        keystoreFile.inputStream().use { ks.load(it, "android".toCharArray()) }
+        val cert = ks.getCertificate("androiddebugkey") ?: return ""
+        MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it) }
+    }.getOrDefault("")
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -19,6 +39,15 @@ android {
         signingConfig = signingConfigs.getByName("debug")
         testFunctionalTest = false
         testHandleProfiling = false
+
+        // Baked in at build time so AppIntegrityCheck.kt can compare it against the real
+        // running APK's signing cert to catch a repackaged/resigned copy. Computed dynamically
+        // from whatever key actually signs this build (both debug and release currently use
+        // the debug signingConfig above - there's no separate release keystore yet) rather than
+        // hardcoded, specifically because this exact debug key was found to be regenerable/
+        // machine-local during the 2026-07-31 signing-mismatch incident (see experience.md) -
+        // a hardcoded value would have gone stale the moment that happened.
+        buildConfigField("String", "EXPECTED_SIGNING_CERT_SHA256", "\"${debugCertSha256()}\"")
 
         ndk {
             // Personal device only (Galaxy A54, arm64-v8a) - no need to build/ship other ABIs.
@@ -58,6 +87,7 @@ android {
         compose = true
         viewBinding = true
         aidl = true
+        buildConfig = true
     }
 
     androidResources {

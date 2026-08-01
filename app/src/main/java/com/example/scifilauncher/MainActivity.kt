@@ -1810,10 +1810,20 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         val avoidTopics = loadAvoidTopics(getSharedPreferences("elene_memory_prefs", MODE_PRIVATE))
                         val lastMsg = XenosNotificationListener.lastMessageInfo
                         val meeting = currentMeeting(this@MainActivity)
+                        val weatherDescription = runCatching {
+                            val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
+                            captureLastLocation(this@MainActivity, lockPrefs)
+                            val loc = loadLastKnownLocation(lockPrefs)
+                                ?: requestAndCacheFreshLocation(this@MainActivity, lockPrefs)
+                            loc?.let { (lat, lng, _) ->
+                                WeatherClient.currentWeatherDescription(lat, lng)
+                            }
+                        }.getOrNull()
                         val ctxMap = buildMap {
                             put("battery_mode", batteryMode.name)
                             put("is_dark", isDark)
                             if (!screenText.isNullOrBlank()) put("screen_text", screenText)
+                            if (!weatherDescription.isNullOrBlank()) put("current_weather", weatherDescription)
                             if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
                             val rememberedFacts = RememberedFactLog.asContextString(this@MainActivity)
                             if (rememberedFacts.isNotBlank()) put("remembered_facts", rememberedFacts)

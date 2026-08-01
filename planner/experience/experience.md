@@ -426,6 +426,277 @@
   visual walkthrough), and the honest Wi-Fi-password-unavailable messages actually displaying
   correctly in the Settings UI.
 
+- (2026-07-30/31) GCP billing incident, unrelated to app code but directly blocked all backend-
+  dependent live testing: `elene-backend` returned HTTP 500/503 to every request. Root-caused via
+  real Cloud Logging evidence, not guessed - a self-built `billing-killswitch` Cloud Function
+  (Pub/Sub-triggered off a Billing Budget alert) had detached billing from the `cedal-fd4a2`
+  project entirely after this month's cumulative cost crossed a £10 budget cap
+  (`Cost 10.04 >= budget 10.0 - disabling billing`), confirmed via `gcloud billing projects
+  describe` showing `billingEnabled: false`. Re-linked billing once
+  (`gcloud billing projects link`) and it worked immediately - but re-tripped within hours,
+  because the £10 cap is checked against *cumulative cost for the calendar month*, not payment
+  status; paying an invoice does not reset it, only the next billing period (the 1st of the
+  month) does. Root-caused a second real finding while investigating: `elene-backend`'s Cloud Run
+  service had `autoscaling.knative.dev/minScale: '1'`, meaning it billed 24/7 for a warm instance
+  regardless of use - this was very likely the single biggest driver of the monthly cost. Fixed
+  with `gcloud run services update elene-backend --min-instances=0` (confirmed deployed, revision
+  `elene-backend-00031-xj2`); Cloud Run natively supports scale-to-zero, so no custom app-side
+  toggle was needed for this part. Audited every other Cloud Run service in the same project (23
+  others, e.g. `android-builder`, `gui-runner`, `cedal-server`, various `*assistant` services) -
+  confirmed none else had `minScale` set, and confirmed the three other billing-linked projects
+  (`cedal-ai`, `work-force-493823`, `xenos-1230e`) have never enabled Cloud Run or Cloud SQL at
+  all, so no equivalent risk there. Separately found a real second always-billing resource: a
+  Cloud SQL instance `cedal-db` (`db-f1-micro`, `activationPolicy: ALWAYS`) backing `cedal-server`
+  (confirmed via the `run.googleapis.com/cloudsql-instances` annotation - it's the *only* service
+  connected to that database), which the user confirmed is their in-development chat app and
+  chose to leave on `ALWAYS` (~£5/month is acceptable). Learned and worth remembering: unlike
+  Cloud Run, current-generation Cloud SQL has no scale-to-zero/auto-wake mechanism at all - gcloud
+  only accepts `always`/`never` for `--activation-policy` (the older on-demand auto-start/stop
+  behavior doesn't exist for this instance), so the only real lever for Cloud SQL idle cost is a
+  manual or scheduled stop, not an automatic one. `cedal-db` was left `SUSPENDED` after the
+  incident and did not clear the moment billing was restored - Google's own backend needs to
+  reconcile a suspension against a newly-active billing account, which isn't instant (a direct
+  `patch` attempt correctly failed with `409: not in an appropriate state`, confirming this isn't
+  fixable by retrying the same call, just by waiting). Final resolution: raised the "Elene backend
+  budget" from £10 to £15 (`gcloud billing budgets update`, budget ID
+  `d2a04f63-027c-430f-a214-3be7ad93a329`) since the month's spend was already past the old cap and
+  would have re-tripped the killswitch again on its next check regardless of re-linking, then
+  re-linked billing a second time - confirmed actually healthy this time via a real HTTP request to
+  `elene-backend`'s root path (a 404, which is correct/expected since no root route is defined; a
+  ~9.5s response time was the normal `minScale=0` cold-start, not an error). **Not yet reconfirmed
+  at time of writing**: whether `cedal-db` has cleared `SUSPENDED` on its own yet.
+- (2026-07-31) Live-tested the capability-question fix from 2026-07-28 (the "can you update
+  yourself?" prompt instruction) for real, after the billing incident above was resolved: asked
+  Elene directly, and the user confirmed she now answers that she can't update or change her own
+  code, but can queue proposed changes (for fingerprint approval) - the fuller answer the prompt
+  fix was meant to produce, not the old flat "no." **Confirmed working**, first real item cleared
+  off the standing "not yet confirmed live" backlog.
+
+- (2026-07-31) Live-tested the WiFi status panel + "Reveal password" honesty fix from 2026-07-28:
+  user confirmed on-device the NETWORK section shows real signal (-75dBm) and real link speed
+  (194Mbps), and tapping "Reveal password" now correctly shows the honest "Android hides this -
+  only readable for a network added by the app itself, not ones set up through system WiFi
+  settings" message instead of the old wrong hash-like value. **Confirmed working.**
+
+- (2026-07-31) Real, unrelated-to-app-code infrastructure incident found and resolved while trying
+  to install a small UI fix (tap-to-fullscreen on Intruder Attempts photos, see below): a plain
+  `adb install -r` of a freshly-built APK failed with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+  Root-caused via real cert comparison (`keytool`/`apksigner verify --print-certs`), not guessed:
+  the dev machine's entire `~/.android` profile (debug.keystore, adbkey, avd, everything) had been
+  created fresh on 2026-07-30 - a full day after the currently-installed app (last updated
+  2026-07-28) was built and signed with a debug key that no longer exists anywhere on this
+  machine. Confirmed this blocks only *new* code changes going forward, not anything already
+  tested earlier this session (that was all against the pre-existing 2026-07-28 install).
+  Investigated the real fix cost before acting: Device Owner provisioning
+  (`dpm set-device-owner`) has a hard Android platform restriction - it refuses outright if any
+  account already exists on the device - and this phone had 6 real Google accounts plus WhatsApp/
+  Instagram/GitHub/Meet already configured (confirmed via `dumpsys account`), meaning the fix
+  wasn't a simple uninstall/reinstall but a full factory reset. Flagged this plainly (including the
+  real Factory Reset Protection risk of getting locked out post-reset) before doing anything, and
+  the user made an informed call to proceed since their accounts/other apps live primarily on a
+  laptop or are self-authored. One real app (Harmix, `com.harmix.player.editmusic`) couldn't be
+  easily re-acquired, so its base + 3 split APKs were pulled via `adb pull` and backed up locally
+  *before* the reset, then reinstalled via `adb install-multiple` afterward - confirmed successful.
+  After the reset: confirmed no accounts existed yet (`dumpsys account` empty), installed the fresh
+  APK, then successfully re-ran `adb shell dpm set-device-owner
+  com.example.scifilauncher/.SequenceDeviceAdminReceiver` - confirmed real (not test-only) Device
+  Owner status via `dumpsys device_policy` showing `testOnlyAdmin=false`. **Real, expected
+  consequence, not yet re-confirmed**: this reset wiped all of this app's own on-device state too
+  (Voice ID enrollment, Sequence Mode config, location history, the intruder capture entries just
+  confirmed working above, remembered facts) - none of it is backed up anywhere, so it all needs
+  rebuilding from scratch, same as a genuinely new install.
+- (2026-07-31) Added tap-to-fullscreen viewing for Intruder Attempts photos in `StorageScreen.kt`
+  (a 56dp thumbnail was too small to actually see anything useful) - a `Dialog` with the photo
+  scaled via `ContentScale.Fit` on a black background, dismissed by tapping again. Split the row's
+  click handling so the photo and the reason/timestamp text have independent tap targets (photo ->
+  fullscreen, text -> expand for the maps link), instead of one handler doing both. Builds clean.
+  **Not yet confirmed live** - blocked on the signing-key/factory-reset saga above at the time this
+  was written; needs a real on-device tap-through once the phone is back to a normal working state.
+- (2026-07-31) GCP billing killswitch kept re-tripping through this whole session even after
+  raising its budget - root-caused for real by downloading and reading the actual Cloud Function
+  source (`gcloud storage cp` on its `gcf-v2-sources-...` bucket object, not guessed): the code
+  itself is correct and reads `budgetAmount` dynamically from each incoming Pub/Sub alert payload,
+  no hardcoded value - the repeated `budget=10.0` readings were because Google's own Budget-alert
+  pipeline hadn't yet propagated the raised amount into new alert payloads, a real delay on
+  Google's side, not a bug in this project's code. Also found there were two separate £10 budgets
+  on the account both wired to the same Pub/Sub topic (only one had been raised the first time,
+  which is why it re-tripped again immediately) - both now raised to £15. Set up a background
+  auto-relink watcher (polls the backend, checks `billingEnabled`, re-links automatically) as a
+  stopgap while the propagation catches up, per the user's explicit choice to keep the safety net
+  fully live rather than pause it. Confirmed working live - the watcher caught and fixed at least
+  three real trips autonomously during this same session without the user having to notice/report
+  each one.
+
+- (2026-07-31) Anti-tampering/RASP hardening pass built per the plan in
+  `planner/not_started/not_started.md`, blocked from on-device testing partway through by a
+  separate, real Samsung Auto Blocker issue (see below) - a real, current example of exactly the
+  "build then confirm before moving on" discipline this project's standing rule exists for, since
+  none of this can be marked done from a clean build alone. Four pieces, all compile clean
+  (including a real native/NDK build):
+  1. **APK integrity self-check** (`AppIntegrityCheck.kt`) - compares the running APK's real
+     signing certificate against one baked in at build time. Computed *dynamically* from the
+     actual debug keystore via a small Gradle-script function (`debugCertSha256()` in
+     `app/build.gradle.kts`), not hardcoded - specifically because this exact debug key was found
+     to be regenerable/machine-local earlier this same session (see the signing-mismatch incident
+     entry above), so a hardcoded value would have gone stale immediately. Honestly documented
+     limitation: this only protects against *someone else's* modified copy, not a stolen signing
+     key, and debug-signed apps are inherently less stable identities than a real release key
+     (this project has never had a release keystore).
+  2. **Root/Magisk/SELinux checks** (`RootDetection.kt`) - common su binary paths, known Magisk
+     package IDs, real `/sys/fs/selinux/enforce` (falling back to `getenforce`) - not treated as
+     a guarantee, since Magisk's own Zygisk/DenyList hiding features exist to spoof exactly this.
+  3. **Exported-component review** - checked every `android:exported="true"` component in the
+     manifest, not assumed: most already carry the *strongest* available protection
+     (`BIND_INPUT_METHOD`/`BIND_DEVICE_ADMIN`/`BIND_VPN_SERVICE`/`BIND_SCREENING_SERVICE` are
+     OS-only system permissions, stronger than a custom signature permission), `MainActivity` is
+     deliberately open since it's the launcher itself, and `CedalSharedSystemReceiver` already had
+     a real signature-level manifest permission. Found and fixed the one genuine gap: that
+     receiver trusted a self-reported `from_package` intent extra against an allowlist without
+     ever re-verifying the claimed sender's actual installed signature - fixed by adding
+     `CedalSharedSystem.isVerifiedSibling()`, re-checked in `onReceive` before trusting anything.
+     Honestly noted in the code: `BroadcastReceiver` has no direct calling-UID API the way a
+     Binder call does, so re-verifying the claimed sender's real signature is the strongest
+     defense-in-depth actually available here, not a true calling-identity check.
+  4. **Layered native Frida detection** (`frida_detect_jni.cpp`, new `libfridadetect.so`, NDK/
+     CMake) - five independent signals: a `/proc/self/maps` scan for a loaded Frida agent/
+     gadget, a probe of Frida's default port 27042, a `/proc/self/task` thread-name scan, a
+     `/proc/[pid]/cmdline` scan for a running Frida server process, and a coarse CPU-timing
+     heuristic (deliberately treated as the weakest signal, since real device variance can trip
+     it alone). Detection strings are XOR-obfuscated at compile time via a constexpr helper so a
+     static `strings` pass on the shipped `.so` doesn't hand over the exact signatures. Reports a
+     signal *count* rather than one hard yes/no, matching the plan's own "no single check works
+     alone" reasoning. Deliberately native/JNI, not Kotlin, since Frida hooks the Java/ART layer
+     far more easily than raw `/proc` reads and sockets.
+  All four wired into a new **Security > Integrity & Tamper Detection** panel section -
+  deliberately passive/informational (status rows + an explanatory dialog), matching this app's
+  existing transparency pattern (the Capabilities screen) rather than an aggressive auto-block on
+  detection, given the real false-positive risk especially from the timing heuristic. **Not yet
+  confirmed live** - blocked mid-session by an unrelated real issue: Samsung's Auto Blocker
+  (re-armed after the same-day factory reset) greyed out both USB and wireless debugging with no
+  discoverable toggle to disable it (checked Quick Settings, Security and privacy, its Security
+  tab, and a pending-software-update check - none surfaced it), so nothing built this pass has
+  been installed or exercised on the real device yet.
+
+  **Update, same day**: the Auto Blocker issue resolved via a Samsung "Reset settings" (not a
+  full factory reset) - adb access came back, and this pass was installed and exercised for
+  real. All four results confirmed correct: App integrity showed "Verified", Root/Magisk showed
+  "Not detected", Instrumentation (Frida) showed "Not detected" - and confirmed via logcat this
+  is a genuine negative, not a silent failure (`libfridadetect.so` shows a real `dlopen ... ok`
+  load), and SELinux showed "Unknown" - also confirmed correct, not a bug: the code deliberately
+  reports unknown rather than guessing when `/sys/fs/selinux/enforce` isn't readable and
+  `getenforce` isn't runnable from an app process, itself expected on a hardened Samsung/Knox
+  build tighter than stock AOSP. **Confirmed working**, a real on-device result, not assumed
+  from a clean build.
+- (2026-07-31) Real Samsung Auto Blocker issue, found live: after the same-day factory reset,
+  Auto Blocker came back enabled and now blocks both USB debugging and wireless debugging in
+  Developer Options (both show greyed out with "Blocked by Auto Blocker"). Its own toggle is not
+  discoverable anywhere tried so far - not in Quick Settings, not in Security and privacy's main
+  list or its Security tab, and a pending software/Galaxy Store update check didn't surface it
+  either. Root-caused why a code-based workaround isn't viable either: this app (Device Owner)
+  has no already-installed feature for forcibly enabling ADB via
+  `DevicePolicyManager.setGlobalSetting`, and even if one were built now, deploying it requires
+  `adb install`, which is exactly what's blocked - a genuine chicken-and-egg dead end for any
+  code-side fix while this specific restriction holds. Also flagged, not yet tested: this exact
+  API already has a known failure mode in this codebase for a similar case - `setGlobalSetting`
+  for `AIRPLANE_MODE_ON` was confirmed by direct testing to only flip the raw setting value
+  without the OS actually enforcing it, since real enforcement needed a protected broadcast no
+  non-system app can send - so even if adb access were restored some other way and this were
+  tried, it's a real gamble, not a confirmed fix, and shouldn't be presented as one without
+  testing. **Currently unresolved** - blocking all on-device testing/installation until the user
+  finds a way to disable Auto Blocker or otherwise restores adb access.
+
+- (2026-07-31) Weather feature built and confirmed live, after a real chain of on-device
+  debugging - a good example of the standing "verify before moving on" rule catching real gaps a
+  clean build never would have. Built `WeatherClient.kt` (Open-Meteo, free/no API key, matching
+  this project's existing preference for no-signup services), wired `current_weather` into both
+  chat context call sites (ScifiAccessibilityService and MainActivity's home-bubble path) plus
+  the backend prompt, with an honest "say you don't have it" instruction if the field's missing
+  rather than let the model invent a forecast. First real gap found live: the Dashboard already
+  had a **dead hardcoded weather placeholder** (`"--°C CLEAR"`, never once updated) that the user
+  pointed at directly on-device - wired it to real WeatherClient data too. Second real gap, found
+  via actual `dumpsys location` evidence, not guessed: on this freshly-reset phone, no location
+  fix existed *system-wide*, for any provider, even Google's own fused provider - the existing
+  `captureLastLocation()` (a passive `getLastKnownLocation()` read, already used elsewhere in the
+  app for Sequence Mode/Intruder Attempts) had nothing to read, because nothing had ever actually
+  requested a fix since the reset. Built a real fix: `requestFreshLocation()` /
+  `requestAndCacheFreshLocation()` in SequenceMode.kt, an active `requestLocationUpdates()` call
+  across every enabled provider with a timeout, used as a fallback wherever the passive cache is
+  empty. First attempt at a 15s timeout genuinely came back with zero location callbacks
+  (confirmed via `dumpsys location` showing the real registration/request/timeout sequence, not
+  assumed) - a real GPS cold-start limitation (no cached almanac/assistance data right after a
+  reset), not a code bug, so the honest fix was raising the timeout to 45s and having the user
+  try near a window, not writing more code to chase a physics problem. **Confirmed working** on
+  the next attempt - a real fix landed (same real Edinburgh-area coordinates seen earlier in
+  Intruder Attempts, confirming it's genuine), and the Dashboard weather display updated with
+  real data. This location-fix improvement isn't weather-specific - Sequence Mode, Location
+  History, and Intruder Attempts all read from the same cache and now benefit from it too on any
+  future fresh install.
+- (2026-07-31) Sequence Mode auto-arm triggers built, in response to the user directly asking
+  "how does the app know it got stolen?" - a good question that surfaced a real gap: Sequence
+  Mode had **no automatic trigger at all** since the old per-app-lock's "3 wrong PIN attempts"
+  auto-arm was removed on 2026-07-26 and never replaced; arming was 100% manual (the Security
+  screen's "Trigger lockdown now" button) this whole time. User's first idea was heart-rate-based
+  detection (elevated pulse = maybe running from a theft) - correctly declined after explaining
+  why it doesn't work for this device/threat model: the Galaxy A54 has no heart-rate sensor at
+  all (that's a Galaxy Watch/S-Ultra camera+flash feature needing a finger on the camera, not
+  something a running thief would do), and even with one, it would read the *owner's* pulse, not
+  a thief's, unless the thief were also wearing the owner's wearable - which defeats a "grab the
+  phone and run" scenario. Built two real triggers instead: (1) **N-failed-fingerprint auto-arm**
+  (`shouldAutoArmFromFailedAttempts()` in SequenceMode.kt, wired into
+  `BiometricAuthActivity.recordCapture()`) - 3 failed scans within 10 minutes arms immediately,
+  reusing IntruderCaptureLog's own timestamps rather than a separate counter. (2)
+  **Accelerometer-based motion-spike detection** (`MotionTheftDetector.kt`, registered/
+  unregistered on ScifiAccessibilityService's lifecycle) - a real signal from the phone's own
+  `TYPE_LINEAR_ACCELERATION` sensor (a sustained running-like peak cadence over 5s), explicitly
+  never arms directly given real false-positive risk (genuine exercise, a bumpy car ride, quickly
+  picking the phone up all look similar) - instead starts a confirm-or-arm flow matching what the
+  user described: Elene speaks "are you running, or is everything OK? Confirm your fingerprint
+  within 10 minutes" (new `ScifiAccessibilityService.speakElene()`, deliberately not reusing the
+  existing private `speakOut()` since that's coupled to the conversational bubble's own listening
+  state machine), a notification with a tap-to-confirm action
+  (`BiometricAuthActivity`'s existing flow, extended with a `REASON_MOTION_CONFIRM` extra), and a
+  `MotionConfirmTimeoutWorker` (WorkManager, matching the existing `SequenceWipeWorker` pattern)
+  that only actually arms Sequence Mode if the 10-minute window elapses unconfirmed. Both
+  triggers call the same `enterSequenceMode()` every other arm path already uses - no separate/
+  parallel arming logic. Security screen's Sequence Mode section updated to disclose both
+  triggers and their thresholds, plus a new "Awaiting confirmation (motion detected)" status
+  state. Builds clean, installs with no crash (confirmed via logcat). **Not yet confirmed live**:
+  blocked on Accessibility Service needing manual re-enable after the same-day factory reset
+  (now done by the user) - the actual motion-spike detection and failed-attempt auto-arm haven't
+  been triggered for real yet, only confirmed to build/install/run without crashing.
+
+  **Update, same day - both triggers live-tested for real, with real bugs found and fixed along
+  the way, not just confirmed on first try:**
+  - Failed-fingerprint auto-arm: tested by failing 3 real fingerprint scans on the Security
+    screen prompt - genuinely auto-armed. Along the way, found via real evidence
+    (`SequenceAlertWorker` logcat showing `SUCCESS`, not the expected first-12h-delay behavior)
+    that the *existing*, pre-dating-this-session `SequenceAlertWorker` periodic job's first run
+    doesn't wait the full interval the way the code's own framing implied - it fired almost
+    immediately after arming and reached the first contact in the list (the user's brother)
+    before the user's own quick disarm cancelled it partway through the contact loop. A real
+    WhatsApp/SMS alert did go out to one real contact during testing - user confirmed already
+    telling that contact it was a test. Not a bug introduced this session, but a real, previously
+    unknown behavior surfaced by actually exercising the new auto-arm trigger for the first time.
+    Led to a deliberate, reasoned interval change (12h -> 1h, not the initially-requested 5min) -
+    weighed WhatsApp's own spam/abuse detection risk of losing the channel entirely mid-emergency
+    against wanting frequent updates, and a real safety consideration for the actual kidnapping/
+    forceful-theft scenario the user described: frequent visible WhatsApp activity risks tipping
+    off someone holding the phone, which real hostage/abduction-response guidance generally
+    advises against - landed on 1h as a sustainable middle ground, with SMS (already sent
+    alongside WhatsApp every cycle) as the quieter, more reliable fallback channel.
+  - Motion-spike detection: first real attempt (a vigorous hand shake) produced no trigger at
+    all. Root-caused with real evidence, not re-guessed - `dumpsys sensorservice`'s raw linear-
+    acceleration samples showed the actual shake only reached ~4 m/s^2 peak, far under the
+    original 11 m/s^2 threshold (picked blind, never validated against a real human shake).
+    Lowered to 2.5 m/s^2 / 4 peaks (from 11 m/s^2 / 6 peaks) based on that real reading, with the
+    same dumpsys data's quiet-baseline samples (~0.02-0.15 m/s^2) confirming a real margin still
+    exists against false triggers from ordinary handling. Retested after the fix - triggered
+    correctly, Elene's spoken "are you running?" prompt was genuinely heard, and the alert
+    resolved (fingerprint-confirmed) without arming Sequence Mode. **Both triggers confirmed
+    working for real**, not from a clean build - the real values needed real on-device
+    measurement to get right, in both directions (the alert interval needed slowing down, the
+    motion threshold needed speeding up/lowering).
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

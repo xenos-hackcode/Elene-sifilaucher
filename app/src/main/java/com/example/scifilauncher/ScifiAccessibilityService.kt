@@ -118,9 +118,11 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
         registerCallStateListener()
         scheduleWakeWordCheck(delayMillis = 4000L)
+        MotionTheftDetector.register(this)
     }
 
     override fun onDestroy() {
+        MotionTheftDetector.unregister(this)
         clearHighlight()
         removeHideOverlay()
         hideBubble()
@@ -755,8 +757,23 @@ class ScifiAccessibilityService : AccessibilityService() {
                     .take(8)
                     .mapNotNull { (pkg, _) -> labelByPkg[pkg] }
             }.getOrDefault(emptyList())
+            val weatherDescription = runCatching {
+                val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
+                // Don't just hope some other feature already populated the cache (Sequence
+                // Mode arm, an Intruder capture, the 15-min periodic LocationHistoryWorker) -
+                // a fresh install/reset has nothing cached yet, so actively request a
+                // best-effort fix right here too (cheap - reads whatever fix providers already
+                // have, doesn't wait on a fresh GPS lock).
+                captureLastLocation(this@ScifiAccessibilityService, lockPrefs)
+                val loc = loadLastKnownLocation(lockPrefs)
+                    ?: requestAndCacheFreshLocation(this@ScifiAccessibilityService, lockPrefs)
+                loc?.let { (lat, lng, _) ->
+                    WeatherClient.currentWeatherDescription(lat, lng)
+                }
+            }.getOrNull()
             val ctxMap = buildMap {
                 if (screenText.isNotBlank()) put("screen_text", screenText)
+                if (!weatherDescription.isNullOrBlank()) put("current_weather", weatherDescription)
                 if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
                 val rememberedFacts = RememberedFactLog.asContextString(this@ScifiAccessibilityService)
                 if (rememberedFacts.isNotBlank()) put("remembered_facts", rememberedFacts)
@@ -845,6 +862,28 @@ class ScifiAccessibilityService : AccessibilityService() {
         @Deprecated("Deprecated in Java", ReplaceWith(""))
         override fun onError(utteranceId: String?) {
             bubbleHandler.post { retryListeningSoon(500L) }
+        }
+    }
+
+    /** Standalone announcement (e.g. MotionTheftDetector's "are you running?" alert) - same real
+     * TTS pipeline as speakOut() below (ElevenLabs first, on-device fallback), but deliberately
+     * not calling into speakOut() itself, since that function is tightly coupled to the
+     * conversational bubble's own listening state machine (it calls retryListeningSoon() on
+     * failure) and this needs to work as a one-off system alert outside any conversation turn. */
+    fun speakElene(text: String) {
+        bubbleServiceScope.launch {
+            val audio = runCatching { EleneApiClient.fetchTtsAudio(text) }.getOrNull()
+            val played = if (audio != null) playOverlayAudioBytes(audio) else false
+            if (!played) {
+                val tts = bubbleTts ?: TextToSpeech(this@ScifiAccessibilityService) { status ->
+                    if (status == TextToSpeech.SUCCESS) {
+                        bubbleTts?.speak(text, TextToSpeech.QUEUE_ADD, null, "elene_motion_alert")
+                    }
+                }.also { bubbleTts = it }
+                if (tts.isLanguageAvailable(java.util.Locale.getDefault()) >= TextToSpeech.LANG_AVAILABLE) {
+                    tts.speak(text, TextToSpeech.QUEUE_ADD, null, "elene_motion_alert")
+                }
+            }
         }
     }
 

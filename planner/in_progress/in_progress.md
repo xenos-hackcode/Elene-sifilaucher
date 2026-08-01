@@ -1,21 +1,95 @@
 # Working on right now
 
-## Immediate: STOP and test before adding anything else
-Per the user's explicit note (2026-07-26): before picking up anything new, the last batch of
-changes needs real on-device confirmation, specifically:
-1. Does your own voice now pass reliably with the multi-sample pool (not averaged)?
-2. Does asking Elene something while music/video is playing actually pause it and answer?
-3. Is the Recents lock loop actually gone, or just less frequent?
-4. Does your sister's voice (or any non-enrolled voice) actually get refused for real commands now?
+*Rewritten 2026-07-30 — the previous version of this file was stale (dated 2026-07-26, referencing
+a batch of questions that were superseded by later work). The real, current backlog lives in
+`planner/experience/experience.md`; this file is just the live index into it.*
 
-Nothing new should start until these four have a real answer logged in experience/.
+## Standing rule (unchanged, still active)
+Per the user's 2026-07-26 note: don't start new feature work until the last batch has a real,
+on-device confirmed result logged in `experience/`. A LOT has been built across 2026-07-27/28
+(screen perception, Updates screen, Sandbox, Sequence Mode force-open, the four-feature batch,
+Intruder Attempts rebuild, "Hey Elene" wake word, ECAPA quantization + Voice ID enrollment fixes,
+Link to Phone) and almost none of it has been confirmed live yet. Clearing this backlog is the
+current task — see `planner/possibilities` / this file's checklist below, not new feature work.
+
+## Live-confirmation checklist (2026-07-30)
+Each line is one "not yet confirmed live" item pulled from `experience.md`, in rough order of how
+easy it is to test with just this one phone and no extra setup. Check items off (and log the real
+result in `experience.md`) as they're actually tested — don't mark done from a clean build alone.
+
+### Testable solo, right now, on this one device
+- [x] Capability question: does Elene now give the fuller "can't self-update, but can queue a
+      proposal" answer to "can you update yourself?" **Confirmed 2026-07-31** - user asked live,
+      Elene answered correctly. (Note: this whole checklist was blocked for about a day by a real
+      GCP billing incident, now resolved - see `experience.md` 2026-07-30/31 entry.)
+- [ ] "Hey Elene" wake word: reliably detected in practice? Real battery cost? Actually stops
+      listening during battery saver?
+- [ ] Memory recency-wins: tell two contradicting facts, confirm the newest is listed first and
+      marked, and that Elene trusts it in conversation.
+- [ ] remember_fact / remembered_facts: does a remembered fact survive a backend restart/recycle?
+- [ ] Voice ID: does the user's own voice now pass reliably after the multi-sample-pool +
+      bad-take-retry + quantization changes? (Check `VoiceIdConfidenceLog` after normal use.)
+- [ ] Screen perception (describe_screen / play_game): real voice-triggered flow, MediaProjection
+      consent, a real screenshot correctly described, game-loop actually tapping a real game,
+      app-switch auto-stop, the mic-stays-closed-during-bootstrap fix, the avatar-vs-chat-row tap
+      fix in WhatsApp.
+- [ ] Updates screen: a real voice-triggered proposal creating an entry + live confirmation panel,
+      an Elene-self-initiated proposal landing quietly, reviewing/approving from the screen with a
+      real fingerprint scan.
+- [x] WiFi status panel: connected SSID/signal/link-speed/IP displaying correctly; "Reveal
+      password" now showing the honest "Android hides this" / "only a derived key" message instead
+      of wrong data. **Confirmed 2026-07-31.**
+- [ ] Sandbox: Shizuku "Start" re-tapped, then a real Shizuku shell command actually gated
+      (passed/rejected) by the isolated `:sandbox` process.
+- [x] Intruder Attempts: a real failed fingerprint scan producing an actual photo + location entry
+      visible in Security > Storage. **Confirmed 2026-07-31** - 5 real entries with real photo/
+      GPS/timestamp/reason. Also added tap-to-fullscreen photo viewing, confirmed working.
+- [x] Anti-tampering/RASP hardening pass (APK integrity, root/Magisk/SELinux, exported-component
+      signature verification, native layered Frida detection) - **confirmed 2026-07-31**, all four
+      checks live-tested correct on the real device. See done.md.
+- [x] Sequence Mode force-open / a real Sequence Mode alert firing while genuinely armed -
+      **confirmed 2026-07-31**, but as a side effect of testing the new failed-fingerprint
+      auto-arm trigger below, not the originally-planned deliberate test - a real WhatsApp/SMS
+      alert reached one real contact before the user's own disarm cancelled the rest.
+- [x] Weather feature (Dashboard display + Elene voice) - **confirmed 2026-07-31**, after fixing
+      two real gaps found live: a dead hardcoded dashboard placeholder, and no location fix
+      existing system-wide on this freshly-reset phone (built an active location-request
+      fallback, see experience.md).
+- [x] Sequence Mode auto-arm triggers (new, not previously planned) - N-failed-fingerprint-attempts
+      and accelerometer motion-spike detection, both with a confirm-or-arm grace period for the
+      weaker motion signal - **confirmed 2026-07-31**, both real bugs found via on-device
+      evidence and fixed (alert-interval timing, motion threshold tuning). See experience.md for
+      full detail.
+- [ ] Mic-reopens-with-AI's-own-voice: does the 500ms buffer after TTS actually stop the mic from
+      picking up Elene's own voice, or does the issue persist?
+
+### Needs something beyond this one phone — ask the user before attempting
+- [ ] Sister's voice (or any non-enrolled voice) actually gets refused for a gated command —
+      needs a second real person.
+- [ ] A real incoming cellular call: ringing-announcement, `acceptRingingCall()` actually answering
+      on this Samsung device, call-screening role live decline.
+- [ ] Message reply/compose-and-send round trip with a real WhatsApp contact.
+- [ ] Calendar meeting-awareness with a real calendar event.
+- [ ] Voice-memo playback round trip.
+- [ ] Traffic proxy routing to an actually-running mitmproxy/Burp instance on a laptop.
+- [ ] Keep-screen-on while talking, holding through a real multi-turn conversation.
+- [ ] Link to Phone: the full two-device pairing/streaming/command-dispatch flow — needs a second
+      real Android device (or emulator) with the new `:agent` app (`com.example.phonelinkagent`)
+      installed. Not available in the previous session.
+- [ ] Agent app's disclosure screen — real visual walkthrough (only confirmed via code/manifest so
+      far).
+- [ ] Sequence Mode force-open (Option A): an actual Sequence Mode WhatsApp alert firing while the
+      phone is genuinely locked, confirming the keyguard is bypassed just for that send and fully
+      restored after. **Caution**: this deliberately manipulates the real lockscreen — coordinate
+      timing with the user before triggering, don't do it unattended.
 
 ## Blocked, needs a decision (not being worked on until resolved)
-Wake-word engine ("Hey Imperial"): a real custom wake-word model needs training data (50+
-recorded samples of the phrase) and a training run this environment cannot perform standalone -
-it's not a pure coding task. Options to resolve, not yet chosen:
-- Record the samples yourself and run training separately (on a computer with more compute),
-  then hand the resulting model back to drop into the app
-- Use a simpler text-based wake-phrase check via the STT already running (loses the "1% CPU,
-  always-on, offline" efficiency property of a real wake-word model, but works today)
-- Accept one of openWakeWord's existing pretrained words instead of a custom phrase
+Wake-word *engine* upgrade (a real trained "Hey Imperial"-style model, not the current STT-polling
+approximation used for "Hey Elene"): needs training data (50+ recorded samples of the phrase) and a
+training run this environment cannot perform standalone — it's not a pure coding task. Options,
+not yet chosen:
+- Record the samples yourself and run training separately (a computer with more compute), then
+  hand the resulting model file back to drop into the app.
+- Keep the current STT-polling approximation ("Hey Elene" already ships this way) — works today,
+  gives up the always-on/~1%-CPU/offline efficiency a real trained wake-word model would have.
+- Accept one of openWakeWord's existing pretrained words instead of a custom phrase.

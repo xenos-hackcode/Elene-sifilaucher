@@ -40,12 +40,10 @@ object CedalSharedSystem {
 
     /** Which known sibling packages are installed AND signed with our same certificate. */
     fun findInstalledSiblings(context: Context): List<String> {
-        val ourSignature = signatureHash(context, context.packageName) ?: return emptyList()
-
         return CEDAL_KNOWN_SIBLINGS.filter { pkg ->
             runCatching {
                 context.packageManager.getPackageInfo(pkg, 0)
-                signatureHash(context, pkg) == ourSignature
+                isVerifiedSibling(context, pkg)
             }.getOrDefault(false)
         }
     }
@@ -91,6 +89,18 @@ object CedalSharedSystem {
         }.toMap()
     }
 
+    /** Re-verifies a claimed sender's actual installed signature against our own, rather than
+     * trusting the self-reported package name alone. Defense-in-depth for the case where an
+     * OS-level bug ever let something bypass the manifest-level signature permission check -
+     * BroadcastReceiver.onReceive has no direct calling-UID API the way a Binder call does, so
+     * this is the strongest verification actually available here. */
+    fun isVerifiedSibling(context: Context, packageName: String): Boolean {
+        if (packageName !in CEDAL_KNOWN_SIBLINGS) return false
+        val ours = signatureHash(context, context.packageName) ?: return false
+        val theirs = signatureHash(context, packageName) ?: return false
+        return ours == theirs
+    }
+
     private fun signatureHash(context: Context, packageName: String): String? {
         return runCatching {
             val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -118,7 +128,10 @@ class CedalSharedSystemReceiver : BroadcastReceiver() {
         if (intent.action != CEDAL_SYNC_ACTION) return
 
         val fromPackage = intent.getStringExtra("from_package") ?: return
-        if (fromPackage !in CEDAL_KNOWN_SIBLINGS) return
+        if (!CedalSharedSystem.isVerifiedSibling(context, fromPackage)) {
+            Log.w(TAG, "Rejected sync claiming to be from $fromPackage - signature didn't match")
+            return
+        }
 
         val prefs = CedalSharedSystem.prefs(context)
         if (!CedalSharedSystem.isEnabled(prefs)) return

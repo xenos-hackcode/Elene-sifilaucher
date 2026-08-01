@@ -29,6 +29,49 @@ private const val KEY_LAST_LOCATION_LNG = "last_location_lng"
 private const val KEY_LAST_LOCATION_AT = "last_location_at"
 private const val KEY_FULL_WIPE_ENABLED = "sequence_mode_full_wipe_enabled"
 
+// Auto-arm trigger #1: repeated failed fingerprint scans on device-action confirmations
+// (see IntruderCaptureLog) - a direct, real "someone who isn't the owner is trying to use this
+// phone" signal, unlike the motion trigger below.
+const val FAILED_ATTEMPT_AUTO_ARM_THRESHOLD = 3
+val FAILED_ATTEMPT_AUTO_ARM_WINDOW_MILLIS = TimeUnit.MINUTES.toMillis(10)
+
+// Auto-arm trigger #2: a sudden burst of phone motion (see MotionTheftDetector) - a much
+// weaker, indirect signal (picking the phone up quickly, a bumpy car ride, and genuine running
+// for exercise all look similar to "someone grabbed it and ran"), so it never arms immediately -
+// it only starts a confirm-or-arm countdown, giving the real owner a chance to say "I'm fine."
+const val KEY_MOTION_ALERT_PENDING_SINCE = "motion_alert_pending_since"
+private const val KEY_MOTION_ALERT_COOLDOWN_UNTIL = "motion_alert_cooldown_until"
+val MOTION_ALERT_CONFIRM_WINDOW_MILLIS = TimeUnit.MINUTES.toMillis(10)
+private val MOTION_ALERT_COOLDOWN_MILLIS = TimeUnit.MINUTES.toMillis(15)
+
+fun isMotionAlertPending(prefs: SharedPreferences): Boolean =
+    prefs.getLong(KEY_MOTION_ALERT_PENDING_SINCE, -1L) > 0
+
+fun isMotionAlertOnCooldown(prefs: SharedPreferences): Boolean =
+    System.currentTimeMillis() < prefs.getLong(KEY_MOTION_ALERT_COOLDOWN_UNTIL, 0L)
+
+fun startMotionAlert(prefs: SharedPreferences) {
+    prefs.edit().putLong(KEY_MOTION_ALERT_PENDING_SINCE, System.currentTimeMillis()).apply()
+}
+
+/** Called both when the user confirms via fingerprint (false alarm) and when the timeout
+ * worker actually arms Sequence Mode - either way the alert is resolved and shouldn't keep
+ * firing again immediately off the same/nearby motion. */
+fun resolveMotionAlert(prefs: SharedPreferences) {
+    prefs.edit()
+        .remove(KEY_MOTION_ALERT_PENDING_SINCE)
+        .putLong(KEY_MOTION_ALERT_COOLDOWN_UNTIL, System.currentTimeMillis() + MOTION_ALERT_COOLDOWN_MILLIS)
+        .apply()
+}
+
+/** Real "N failed fingerprint scans in a short window" check against IntruderCaptureLog's own
+ * timestamps - no separate counter to keep in sync, just counts what's already being recorded. */
+fun shouldAutoArmFromFailedAttempts(context: Context): Boolean {
+    val cutoff = System.currentTimeMillis() - FAILED_ATTEMPT_AUTO_ARM_WINDOW_MILLIS
+    val recentCount = IntruderCaptureLog.loadAll(context).count { it.timestamp >= cutoff }
+    return recentCount >= FAILED_ATTEMPT_AUTO_ARM_THRESHOLD
+}
+
 const val SEQUENCE_ALERT_WORK_NAME = "sequence_mode_alerts"
 const val SEQUENCE_WIPE_WORK_NAME = "sequence_mode_wipe"
 private val ALERT_REPEAT_WINDOW_MILLIS = TimeUnit.DAYS.toMillis(2)
@@ -68,6 +111,60 @@ private fun saveLastKnownLocation(prefs: SharedPreferences, lat: Double, lng: Do
         .putString(KEY_LAST_LOCATION_LNG, lng.toString())
         .putLong(KEY_LAST_LOCATION_AT, System.currentTimeMillis())
         .apply()
+}
+
+/** Requests a genuine, live location fix and waits for it (up to [timeoutMillis]), rather than
+ * only ever reading whatever's already cached. Real gap found live, not assumed: on a freshly
+ * reset device, `LocationManager.getLastKnownLocation()` (what captureLastLocation() below
+ * uses) returned null for every provider *system-wide* - confirmed via `dumpsys location`
+ * showing every provider's "last location" as null, not just this app's own read - because
+ * nothing had ever actually requested a fix on the device yet, even with Location toggled on.
+ * A passive cache read can't produce a value that has never existed. */
+@SuppressLint("MissingPermission")
+suspend fun requestFreshLocation(context: Context, timeoutMillis: Long = 45_000L): android.location.Location? {
+    val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!hasFine && !hasCoarse) return null
+
+    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val providers = runCatching { lm.getProviders(true) }.getOrDefault(emptyList())
+    if (providers.isEmpty()) return null
+
+    return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val listeners = mutableListOf<android.location.LocationListener>()
+        var resolved = false
+
+        fun finish(location: android.location.Location?) {
+            if (resolved) return
+            resolved = true
+            listeners.forEach { runCatching { lm.removeUpdates(it) } }
+            if (cont.isActive) cont.resume(location) {}
+        }
+
+        handler.postDelayed({ finish(null) }, timeoutMillis)
+        cont.invokeOnCancellation { listeners.forEach { runCatching { lm.removeUpdates(it) } } }
+
+        providers.forEach { provider ->
+            val listener = object : android.location.LocationListener {
+                override fun onLocationChanged(location: android.location.Location) = finish(location)
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(p: String?, status: Int, extras: android.os.Bundle?) {}
+                override fun onProviderEnabled(p: String) {}
+                override fun onProviderDisabled(p: String) {}
+            }
+            listeners.add(listener)
+            runCatching { lm.requestLocationUpdates(provider, 0L, 0f, listener, android.os.Looper.getMainLooper()) }
+        }
+    }
+}
+
+/** Same real fix from [requestFreshLocation], saved into the shared cache captureLastLocation()
+ * and loadLastKnownLocation() already use, so every existing caller benefits once this has run. */
+suspend fun requestAndCacheFreshLocation(context: Context, prefs: SharedPreferences): Triple<Double, Double, Long>? {
+    val location = requestFreshLocation(context) ?: return null
+    saveLastKnownLocation(prefs, location.latitude, location.longitude)
+    return Triple(location.latitude, location.longitude, System.currentTimeMillis())
 }
 
 @SuppressLint("MissingPermission")
@@ -200,7 +297,13 @@ fun enterSequenceMode(context: Context, lockPrefs: SharedPreferences) {
     LockNotificationListenerService.instance?.applySilence(true)
     SystemEventLog.record(context, "SequenceMode", "Armed")
 
-    val alertRequest = PeriodicWorkRequestBuilder<SequenceAlertWorker>(12, TimeUnit.HOURS).build()
+    // 1 hour, not the original 12 - chosen deliberately over a much shorter interval (5-30 min
+    // was considered) after weighing a real tradeoff: WhatsApp's own spam/abuse detection can
+    // flag/ban an account sending this repetitively via automation, and a banned account mid-
+    // emergency loses ALL future alerts for the rest of ALERT_REPEAT_WINDOW_MILLIS - worse than
+    // a slower but sustained cadence. SMS (sent alongside WhatsApp every cycle, see
+    // SequenceAlertWorker) is the quieter/more reliable channel regardless of WhatsApp's state.
+    val alertRequest = PeriodicWorkRequestBuilder<SequenceAlertWorker>(1, TimeUnit.HOURS).build()
     WorkManager.getInstance(context).enqueueUniquePeriodicWork(
         SEQUENCE_ALERT_WORK_NAME, ExistingPeriodicWorkPolicy.REPLACE, alertRequest
     )

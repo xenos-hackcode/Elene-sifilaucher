@@ -137,7 +137,11 @@ fun SecurityScreen(
             PanelSection(title = "SEQUENCE MODE", themeColor = themeColor) {
                 Text(
                     text = "Anti-theft system. \"Standing by\" = watching normally. \"ACTIVE\" " +
-                            "means a failed identity check triggered lockdown just now.",
+                            "means a failed identity check triggered lockdown just now. Auto-arms " +
+                            "on two real signals: 3 failed fingerprint scans within 10 minutes " +
+                            "(immediate), or a sudden motion spike (asks \"are you running?\" " +
+                            "first, then arms if not confirmed by fingerprint within 10 minutes) " +
+                            "- plus the manual trigger below.",
                     color = Color.Gray,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
@@ -145,8 +149,12 @@ fun SecurityScreen(
                 )
                 PanelStaticInfoRow(
                     label = "Anti-theft status",
-                    value = if (isSequenceModeActive(lockPrefs)) "ACTIVE - locked down" else "Standing by",
-                    valueColor = if (isSequenceModeActive(lockPrefs)) Color.Red else themeColor,
+                    value = when {
+                        isSequenceModeActive(lockPrefs) -> "ACTIVE - locked down"
+                        isMotionAlertPending(lockPrefs) -> "Awaiting confirmation (motion detected)"
+                        else -> "Standing by"
+                    },
+                    valueColor = if (isSequenceModeActive(lockPrefs) || isMotionAlertPending(lockPrefs)) Color.Red else themeColor,
                     themeColor = themeColor
                 )
                 if (isSequenceModeActive(lockPrefs)) {
@@ -572,6 +580,106 @@ fun SecurityScreen(
                     onInfoClick = { showLockScreenInfo = true },
                     onClick = onOpenLockScreenSettings
                 )
+            }
+
+            PanelSection(title = "INTEGRITY & TAMPER DETECTION", themeColor = themeColor) {
+                var showIntegrityInfo by remember { mutableStateOf(false) }
+                val context = LocalContext.current
+                val isGenuine = remember { AppIntegrityCheck.isGenuine(context) }
+                val rootStatus = remember { RootDetection.check(context) }
+                val fridaResult = remember { runCatching { FridaDetector.scan() }.getOrNull() }
+
+                PanelStaticInfoRow(
+                    label = "App integrity",
+                    value = if (isGenuine) "Verified" else "MODIFIED - not the genuine build",
+                    valueColor = if (isGenuine) themeColor else Color.Red,
+                    themeColor = themeColor
+                )
+                PanelStaticInfoRow(
+                    label = "Root/Magisk",
+                    value = if (rootStatus.looksRooted) "Detected" else "Not detected",
+                    valueColor = if (rootStatus.looksRooted) Color.Red else themeColor,
+                    themeColor = themeColor
+                )
+                PanelStaticInfoRow(
+                    label = "SELinux",
+                    value = when (rootStatus.selinuxEnforcing) {
+                        true -> "Enforcing"
+                        false -> "Permissive"
+                        null -> "Unknown"
+                    },
+                    valueColor = when (rootStatus.selinuxEnforcing) {
+                        true -> themeColor
+                        false -> Color.Red
+                        null -> Color.Gray
+                    },
+                    themeColor = themeColor
+                )
+                PanelStaticInfoRow(
+                    label = "Instrumentation (Frida)",
+                    value = when {
+                        fridaResult == null -> "Unavailable"
+                        fridaResult.signalCount == 0 -> "Not detected"
+                        fridaResult.signalCount == 1 -> "Possible (1 weak signal)"
+                        else -> "Detected (${fridaResult.signalCount} signals)"
+                    },
+                    valueColor = when {
+                        fridaResult == null -> Color.Gray
+                        fridaResult.signalCount == 0 -> themeColor
+                        fridaResult.signalCount == 1 -> Color(0xFFFFA500)
+                        else -> Color.Red
+                    },
+                    themeColor = themeColor
+                )
+                PanelRow(
+                    label = "About these checks",
+                    themeColor = themeColor,
+                    showDivider = false,
+                    onClick = { showIntegrityInfo = true }
+                )
+                if (showIntegrityInfo) {
+                    AlertDialog(
+                        onDismissRequest = { showIntegrityInfo = false },
+                        confirmButton = {
+                            TextButton(onClick = { showIntegrityInfo = false }) {
+                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                            }
+                        },
+                        title = { Text("Integrity & tamper detection", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text(
+                                modifier = Modifier
+                                    .heightIn(max = 400.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                text =
+                                "App integrity compares this app's real signing certificate " +
+                                    "against the one baked in when it was built, to catch a " +
+                                    "repackaged or resigned copy running under this app's " +
+                                    "identity - it can't detect a stolen signing key used to " +
+                                    "sign a genuine-looking build, since that would pass " +
+                                    "legitimately.\n\n" +
+                                    "Root/Magisk checks common su binary paths and known Magisk " +
+                                    "package IDs. SELinux checks whether it's actually in " +
+                                    "enforcing mode. Worth being honest about the limit: root " +
+                                    "detection is a real cat-and-mouse game - Magisk's own " +
+                                    "hiding features (Zygisk, DenyList) exist specifically to " +
+                                    "spoof exactly these checks - so a clean result here is a " +
+                                    "signal to weigh, not a guarantee.\n\n" +
+                                    "Instrumentation (Frida) layers five independent native " +
+                                    "checks - a loaded-library scan, a probe of Frida's default " +
+                                    "port, a thread-name scan, a running-process scan, and a " +
+                                    "timing heuristic - and reports how many actually flagged " +
+                                    "something, since any single layer alone is a weak signal " +
+                                    "that a determined attacker's own anti-detection scripts " +
+                                    "could defeat once they know what to look for. One weak " +
+                                    "signal (often just the timing check) can happen on a " +
+                                    "genuinely clean device; several at once is a real signal.",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp
+                            )
+                        }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))

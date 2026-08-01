@@ -38,6 +38,17 @@
 - Classic RNNoise (v0.1, tiny ~425KB model) + Speex resampler for real noise suppression before
   matching
 
+## Anti-tampering / RASP hardening (confirmed 2026-07-31)
+- APK integrity self-check comparing the running app's real signing cert against one baked in
+  dynamically at build time
+- Root/Magisk detection (su paths, known Magisk package IDs) + SELinux enforcing-mode check
+- Reviewed every exported manifest component; fixed the one real gap found
+  (CedalSharedSystemReceiver re-verifies a claimed sender's actual signature now, not just an
+  allowlisted name)
+- Layered native (JNI/C++) Frida detection - five independent signals (maps scan, port probe,
+  thread names, process scan, timing heuristic), XOR-obfuscated detection strings in the binary
+- All wired into a new Security > Integrity & Tamper Detection panel
+
 ## Voice ID - Phase 3 (partial, ongoing)
 - General voice commands ("open WhatsApp") now actually GATE on a Voice ID mismatch instead of
   only logging a score afterward

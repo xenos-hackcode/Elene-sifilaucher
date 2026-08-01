@@ -79,45 +79,16 @@ needed, the shape is straightforward: a `WorkManager` periodic job (weekly), gat
 enrollment exists at all, prompting a single top-up recording rather than a full 15-recording
 re-enrollment.
 
-## Anti-tampering / RASP hardening (queued after Voice ID)
+## Anti-tampering / RASP hardening — built and confirmed 2026-07-31, see done.md/experience.md
 
-This whole section exists to defend *this app* against tampering — reverse-engineering, runtime
-hooking, or a modified/repackaged copy being passed off as the real thing. It is explicitly
-different in kind from the offensive tooling refused in `planner/declined/declined.md`: everything
-here inspects or protects this app's own process and APK, never another app's data or another
-device.
+The four detection/hardening pieces originally planned here (layered native Frida detection,
+signature-level permission + runtime caller verification on exported components, root/Magisk/
+SELinux checks, and the APK integrity self-check) are now built, installed, and confirmed
+working live on the real device — see `planner/done/done.md` for the summary and
+`planner/experience/experience.md` (2026-07-31 entries) for the full detail, including the real
+signing-key/factory-reset detour and the Samsung Auto Blocker issue hit along the way. Only the
+last piece of this section is still genuinely not started:
 
-- **Layered Frida detection** — no single check here is meant to work alone, because a single
-  check is trivially defeated by Frida's own anti-detection scripts once an attacker knows what to
-  look for. The layers: a native (JNI/C++, since Frida hooks Java more easily than it hooks native
-  code) scan of `/proc/self/maps` for `frida-agent`/`gum-js-loop` signature strings; a probe of
-  Frida's default port (27042); a scan of `/proc/self/task` for suspicious thread names Frida's
-  runtime creates; keeping the detection strings themselves XOR-obfuscated in the binary so a
-  static `strings` pass on the APK doesn't just hand an attacker the exact signatures being checked
-  for; and timing-attack heuristics (code that runs measurably slower under Frida's instrumentation
-  than it should natively). None of this is a hard guarantee — a sufficiently determined attacker
-  with Frida's own evasion tooling can still get past individual checks — but layering raises the
-  real cost of bypassing all of them at once, which is the actual, achievable goal here.
-- **Signature-level permission + runtime caller verification on exported components** — the
-  manifest-level fix is declaring a custom permission with `protectionLevel="signature"` on any
-  exported `Activity`/`Service`/`BroadcastReceiver`/`ContentProvider`, so only another app signed
-  with the exact same certificate can invoke it. The runtime check on top of that — verifying the
-  actual calling UID's signing certificate via `PackageManager` inside the component itself — exists
-  specifically as defense-in-depth for the case where an OS-level bug lets something bypass the
-  manifest-level permission check entirely; it's redundant by design, not by accident.
-- **Root/Magisk/SELinux-enforcing checks** — checking known `su` binary paths, known Magisk app
-  package IDs, and whether SELinux is actually in enforcing mode (via `getenforce`/
-  `/sys/fs/selinux/enforce`). Worth being honest about the limitation going in: root detection is
-  an inherent cat-and-mouse game — Magisk's own hiding features (Zygisk, DenyList) exist
-  specifically to spoof exactly these checks — so this is a real signal to weigh, not a guarantee
-  the device isn't rooted.
-- **APK signature/integrity self-check** — hashing the app's own signing certificate at runtime
-  (`PackageManager` signature APIs) and comparing it against a known-good hash baked in at build
-  time via `BuildConfig`, to catch a repackaged or resigned copy of the app being distributed or
-  run under a different identity than the real one. Worth being clear about the boundary: this
-  protects against *someone else's* modified copy pretending to be this app — it does nothing if
-  the real signing key itself were ever stolen, since a copy signed with the genuine key would pass
-  this check legitimately. Key security is a separate problem from app-tamper detection.
 - **The self-pentest itself** — running Frida/Objection, Drozer, Burp Suite/mitmproxy, apktool, and
   MobSF against the finished hardening, on the real device, with real tooling, once the layers
   above exist. Each tool actually tests something different, which suggests a rough order: apktool

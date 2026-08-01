@@ -65,3 +65,12 @@ target_link_options(denoise PRIVATE "-Wl,-z,max-page-size=16384")
 # without a project-specific symbol prefix to avoid clashing with a system
 # libspeexdsp, if one were ever loaded into the same process.
 target_compile_definitions(denoise PRIVATE OUTSIDE_SPEEX RANDOM_PREFIX=scifi FLOATING_POINT)
+
+# Layered native Frida detection - deliberately native/JNI rather than Kotlin, since Frida
+# hooks the Java/ART layer far more easily than it hooks native code reading raw /proc files
+# and opening raw sockets directly.
+add_library(fridadetect SHARED
+    frida_detect_jni.cpp
+)
+target_link_libraries(fridadetect log)
+target_link_options(fridadetect PRIVATE "-Wl,-z,max-page-size=16384")
