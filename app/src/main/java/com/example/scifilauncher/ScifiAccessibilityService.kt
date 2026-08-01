@@ -32,6 +32,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlin.random.Random
@@ -792,9 +793,23 @@ class ScifiAccessibilityService : AccessibilityService() {
                     put("current_meeting_title", meeting.title)
                 }
             }
+            // Voice verification and the backend request now run CONCURRENTLY, not
+            // sequentially. Previously voiceIdAllowsCommand() only started its fresh
+            // AudioRecord capture after the full backend round-trip finished - by then the
+            // user had already stopped speaking several seconds earlier, so Silero VAD almost
+            // always found no real speech and the gate silently fail-opened every time (a real
+            // gap found live 2026-08-01 - two "open X" commands ran with zero trace in
+            // VoiceIdConfidenceLog despite a fresh, confirmed-real enrollment). Starting the
+            // capture immediately instead of waiting on the network call removes that dead air.
+            // This doesn't touch the already-declined "capture raw audio concurrently with
+            // SpeechRecognizer itself" territory - SpeechRecognizer has already fully closed by
+            // the time either of these runs; they're just two independent things (a network
+            // call, a mic recording) that no longer have to happen back-to-back.
+            val voiceCheckDeferred = async { voiceIdAllowsCommand(text) }
             val response = EleneApiClient.sendText(userId = "launcher-user", text = text, context = ctxMap)
             android.util.Log.d("EleneBubble", "Response: reply=\"${response?.reply}\" commands=${response?.commands} intent=\"${response?.intent}\"")
             if (response == null) {
+                voiceCheckDeferred.cancel()
                 speakOut("I couldn't reach my backend just now.")
                 return@launch
             }
@@ -807,17 +822,19 @@ class ScifiAccessibilityService : AccessibilityService() {
 
             if (dedupedCommands.isEmpty()) {
                 // Pure conversation, nothing actionable - answer regardless of who's speaking,
-                // same as before. The gate below is specifically for real device actions.
+                // same as before. The gate below is specifically for real device actions. No
+                // need for a voice check here, so stop the recording rather than let it run on.
+                voiceCheckDeferred.cancel()
                 if (!reply.isNullOrBlank()) speakOut(reply) else retryListeningSoon(0)
                 return@launch
             }
 
             // Commands are real actions - "open WhatsApp" used to run for anyone's voice
             // because this only ever logged a score afterward, never actually gated. Now it's
-            // checked BEFORE anything runs, which is a real, deliberate added latency (a fresh
-            // recording has to complete first) - accepted in exchange for it actually meaning
-            // something.
-            if (!voiceIdAllowsCommand(text)) {
+            // checked before anything runs (the concurrent recording above was already under
+            // way while the backend call was in flight, so this await is usually near-instant,
+            // not the multi-second wait a sequential recording would add).
+            if (!voiceCheckDeferred.await()) {
                 speakOut("Voice unrecognized.")
                 return@launch
             }

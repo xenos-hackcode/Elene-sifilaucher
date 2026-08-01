@@ -697,6 +697,55 @@
     measurement to get right, in both directions (the alert interval needed slowing down, the
     motion threshold needed speeding up/lowering).
 
+- (2026-08-01) Real, pre-existing architectural gap found while re-testing Voice ID after
+  re-enrollment (the enrollment itself confirmed working via real embedding data in
+  voice_id_prefs.xml for all 5 styles - not the bug). Two real voice commands ("open WhatsApp",
+  "open Settings") both executed correctly, but neither left any trace in
+  `VoiceIdConfidenceLog` or the `EleneVoiceID` log tag at all - meaning
+  `voiceIdAllowsCommand()`'s gate silently fail-opened both times without ever completing a
+  real verification. Root-caused via exact logcat timestamps, not guessed:
+  `ScifiAccessibilityService.handleSpokenText()` calls `recordVoiceSample()` (a fresh
+  `AudioRecord` capture, separate from the `SpeechRecognizer` session that heard the command)
+  only *after* `EleneApiClient.sendText()`'s full backend round-trip completes - confirmed via
+  the ~4.8s gap between "Response received" and "Command executed" in the logs, matching
+  `recordVoiceSample`'s own duration. By the time that capture starts, the user has already
+  finished speaking and gone quiet for several seconds, so Silero VAD correctly finds no real
+  speech in the recording and returns null (per the already-documented 2026-07-27 VAD-
+  correctness fix: a take with no detected speech fails the capture rather than embedding
+  silence) - which makes the gate fail-open by design every time, for a structural reason, not a
+  regression. This means the general-command Voice ID gate has likely never been effectively
+  verifying anyone in practice since that VAD fix landed, only ever hitting its intentional
+  fail-open path. Ruled out concurrent-capture-during-SpeechRecognizer as the fix (recording a
+  second raw stream *while* SpeechRecognizer is still listening) since that's the exact "replace
+  SpeechRecognizer with a custom capture pipeline" risk the project already explicitly declined
+  during the 2026-07-27 audio-pipeline work, for the same regression-risk-to-the-most-bug-prone-
+  part-of-the-app reason. Real, lower-risk fix instead: run the verification recording
+  *concurrently* with the backend network call (via coroutine `async`) rather than sequentially
+  after it - `SpeechRecognizer` has already fully closed by the time this runs either way, so
+  this doesn't touch the declined concurrent-capture territory; it just removes several seconds
+  of unnecessary dead air the capture was waiting through, moving the recording window as close
+  to "just after the user stopped talking" as this architecture allows without a bigger rebuild.
+  Not a complete fix - a user who goes fully silent after a one-shot command will still
+  sometimes get no real signal to verify against, since there's genuinely no live audio hook
+  into `SpeechRecognizer` itself - but it's a real, honest improvement within the constraints
+  already established, not a rebuild.
+
+  **Confirmed live same day**: restructured `handleSpokenText()` to run
+  `voiceIdAllowsCommand()` via `async` concurrently with `EleneApiClient.sendText()` instead of
+  after it (new `kotlinx.coroutines.async` import), cancelling the recording early on the
+  pure-conversation/no-response paths rather than letting it run unnecessarily. Retested with
+  two real commands - the first turn (a garbled/likely-ambient pickup, STT heard "I couldn't do
+  that I") got a real logged score for the first time ever (`VoiceIdConfidenceLog`: style=SHORT,
+  score=0.109, passed=false) - confirmed via logcat that its commands genuinely never executed
+  (no `Command verb=` line follows), meaning the low-confidence result actually blocked
+  execution, not just logged it. The very next turn ("open WhatsApp") still produced no logged
+  entry - fail-opened again, since that utterance was too short/fast for the concurrent window
+  to catch anything. **Confirmed as a real, partial improvement**: went from a 0%-real-capture-
+  rate gate (100% silent fail-open, effectively decorative) to one that genuinely captures and
+  correctly blocks low-confidence matches at least some of the time - not airtight for every
+  short command, which matches the honest limitation already documented above, not a new
+  regression.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

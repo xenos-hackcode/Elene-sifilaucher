@@ -27,8 +27,17 @@ result in `experience.md`) as they're actually tested — don't mark done from a
 - [ ] Memory recency-wins: tell two contradicting facts, confirm the newest is listed first and
       marked, and that Elene trusts it in conversation.
 - [ ] remember_fact / remembered_facts: does a remembered fact survive a backend restart/recycle?
-- [ ] Voice ID: does the user's own voice now pass reliably after the multi-sample-pool +
-      bad-take-retry + quantization changes? (Check `VoiceIdConfidenceLog` after normal use.)
+- [x] Voice ID enrollment: re-enrolled after the factory reset wiped it - **confirmed 2026-08-01**
+      via real embedding data in voice_id_prefs.xml (all 5 styles: ALPHABET, LONG, MEDIUM,
+      NUMBERS, SHORT).
+- [x] Voice ID general-command gate: found and fixed a real, likely long-standing bug via live
+      testing - the gate's verification recording only started *after* the full backend
+      round-trip, by which point the user had gone silent for several seconds, so it silently
+      fail-opened on effectively every real command (0% real capture rate). Fixed by running the
+      verification recording concurrently with the backend call instead of after it. **Confirmed
+      2026-08-01** - real scores now get captured and low-confidence matches genuinely block
+      command execution, not airtight for every short utterance but a real, working improvement
+      over the previous fully-decorative gate. See experience.md for full detail.
 - [ ] Screen perception (describe_screen / play_game): real voice-triggered flow, MediaProjection
       consent, a real screenshot correctly described, game-loop actually tapping a real game,
       app-switch auto-stop, the mic-stays-closed-during-bootstrap fix, the avatar-vs-chat-row tap
