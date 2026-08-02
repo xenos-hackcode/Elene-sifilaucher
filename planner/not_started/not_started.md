@@ -103,6 +103,45 @@ last piece of this section is still genuinely not started:
   blindly — findings from earlier tools in that order should genuinely inform what the later ones
   focus on, not run as five disconnected checklist items.
 
+## Updates screen Stage 2 — built 2026-08-02, see done.md/experience.md, not yet live-tested
+
+Requested 2026-08-01, built 2026-08-02 - moved to `planner/done/done.md`. The section below is
+kept as the original design record; see `planner/experience/experience.md`'s 2026-08-02 entry for
+what was actually built, the real infrastructure problems hit along the way (repo had silently
+moved to a new owner/name, the old GitHub PAT lacked permissions), and what's still not confirmed
+(no real proposal has gone through the full chain end-to-end yet - blocked on the same GCP billing
+issue as everything else pending this session). The Updates screen (`Security > Activity > Updates`, built 2026-07-27) is
+currently Stage 1 only: a fingerprint-gated approval queue with no code-generation/build/deploy
+pipeline behind an approved entry - proposals just sit there. This is the planned Stage 2: give
+that pipeline a real body, without touching the fingerprint gate itself.
+
+Explicitly scoped, after a direct question to the user about the one part that actually matters
+(whether to remove fingerprint verification from self-updates, mirroring how remote auto-update
+below already got flagged as too consequential to build from a bare spec) - the user's own answer
+was to **keep** fingerprint verification, not remove it. So the real shape of this feature is:
+
+- Triggered only by an explicit user request ("update yourself to do X") - never self-initiated,
+  never triggered by anything Elene decides on her own. This isn't a new decision, it's already
+  the existing propose_update prompt behavior (`backend/elene/main.py`) - Stage 2 just gives the
+  proposal something real to do once approved instead of nothing.
+- Once approved via fingerprint (the existing gate, unchanged), the actual work - writing the
+  change, building it, and deploying it - happens in a **sandbox it creates**, and the AI verifies
+  the change genuinely works there before it's considered done, rather than shipping on faith.
+  What "sandbox" means concretely here still needs real design work before any code: for an app-
+  side change this plausibly means a real build + install to a genuinely isolated test target
+  (not simply overwriting the daily-driver install), and for a backend change plausibly means a
+  separate Cloud Run revision/service tested directly before promoting traffic to it - not
+  guessed at here, needs its own scoping pass.
+- Real, honest gap this doesn't solve on its own: nothing in this project currently gives Elene
+  (the on-device voice assistant) any code-generation, repository, build-toolchain, or device-
+  deployment access at all - she's a chat/vision model wired to a fixed command set, nothing
+  more. Making this real means either (a) this capability is actually a Claude-Code-operated
+  pipeline that Elene's approved proposals *hand off to* rather than something Elene herself
+  executes, or (b) a genuinely new subsystem gets built giving Elene real repo/build/deploy
+  access, which is a much bigger, more consequential thing than what's been asked for so far and
+  would need its own explicit conversation before being assumed. Worth resolving which of these
+  is actually meant before writing any code, not assumed either way.
+
 ## Needs a dedicated security-design pass before any code — not declined, not started
 
 Two more items came out of the 2026-07-26 planning documents that aren't refused (unlike

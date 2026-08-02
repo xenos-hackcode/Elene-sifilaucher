@@ -1,5 +1,15 @@
 # Done (built + installed, not all confirmed working yet - see experience/)
 
+## Updates screen Stage 2 - real backend self-update pipeline (2026-08-02)
+- `/elene/submit_update_request` backend endpoint, called only after a real fingerprint approval
+- A real scheduled cloud agent (hourly) that polls GitHub issues, implements backend-only
+  changes, self-tests against a real local run, deploys to Cloud Run, verifies against the live
+  service, and comments/closes the issue - or leaves it open with a clear explanation if anything
+  doesn't check out
+- Deliberately backend-only scope - app-side (APK) self-update still needs a real local session
+  or the separately-deferred remote-auto-update mechanism
+- **Not yet confirmed live end-to-end** - no real proposal has gone through the full chain yet
+
 ## Screen recording
 - Pause/resume/stop controls in the recording overlay toolbar (draggable, collapsible, icon-only)
 - Real GLSL box-blur (was a solid block before) + working crop for redaction

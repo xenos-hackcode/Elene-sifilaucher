@@ -775,6 +775,14 @@ class ScifiAccessibilityService : AccessibilityService() {
             val ctxMap = buildMap {
                 if (screenText.isNotBlank()) put("screen_text", screenText)
                 if (!weatherDescription.isNullOrBlank()) put("current_weather", weatherDescription)
+                // Bridges the real gap between the vision-based modules (game loop, single
+                // describe_screen calls) and this conversational call - see lastVisualInsight's
+                // own doc comment. 2-minute staleness cutoff so a long-abandoned game session
+                // from earlier doesn't get treated as still-current.
+                if (lastVisualInsight != null && System.currentTimeMillis() - lastVisualInsightAtMs < 120_000L) {
+                    put("last_visual_insight", lastVisualInsight!!)
+                    put("last_visual_insight_age_seconds", ((System.currentTimeMillis() - lastVisualInsightAtMs) / 1000L).toString())
+                }
                 if (avoidTopics.isNotEmpty()) put("avoid_topics", avoidTopics.joinToString(", "))
                 val rememberedFacts = RememberedFactLog.asContextString(this@ScifiAccessibilityService)
                 if (rememberedFacts.isNotBlank()) put("remembered_facts", rememberedFacts)
@@ -1224,6 +1232,20 @@ class ScifiAccessibilityService : AccessibilityService() {
     private var gameLoopStartedAtMs = 0L
     private val gameLoopRecentMoves = ArrayDeque<String>()
 
+    // Real gap found live (2026-08-01): /elene/game_move, /elene/describe_screen, and
+    // /elene/chat are three genuinely separate backend calls with zero shared context by
+    // default - they're all narrow sub-modules of the same Elene (not competing personas), but
+    // without this, conversational chat had no visibility into what the vision-based modules
+    // had just actually seen. Two real symptoms this fixes: asking "what's on my screen" while
+    // a game was actively playing got a blind, disconnected answer (the game loop's own
+    // per-move "reasoning" string was never shared); and a describe_screen result got spoken
+    // once and thrown away, so an immediate follow-up chat question had no memory of what was
+    // just described either. Whichever ran most recently - a game move or a describe_screen
+    // call - gets stashed here and fed into chat context, so conversational Elene isn't blind
+    // to what the vision side of her just saw.
+    private var lastVisualInsight: String? = null
+    private var lastVisualInsightAtMs: Long = 0L
+
     private val perceptionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -1253,6 +1275,24 @@ class ScifiAccessibilityService : AccessibilityService() {
     }
 
     fun startDescribeScreen(question: String?) {
+        // Real bug found live (2026-08-01): asking "what's on my screen" mid-game re-requested
+        // MediaProjection consent from scratch even though play_game had already been granted
+        // it moments earlier and was actively running - a second unexpected permission dialog
+        // appearing mid-session, confusing enough that it derailed the interaction entirely. If
+        // a capture session is already active, reuse it (just ask for one more frame) instead
+        // of tearing down and re-requesting consent. Narrow, accepted race: if the game loop's
+        // own next frame request happens to be in flight at the exact same moment, whichever
+        // request's result arrives second overwrites pendingFrameRequestId and the other is
+        // silently dropped - rare in practice since the loop only requests its next frame
+        // reactively after finishing the previous one, not on an independent timer, and a
+        // dropped one-off query is a much smaller problem than a disruptive repeat consent
+        // prompt.
+        if (gameLoopActive) {
+            pendingCaptureQuestion = question
+            pendingCaptureIsSingle = true
+            requestFrame()
+            return
+        }
         haltListeningForCapture()
         pendingCaptureTargetPkg = lastForegroundPkg
         pendingCaptureQuestion = question
@@ -1347,6 +1387,14 @@ class ScifiAccessibilityService : AccessibilityService() {
             resetCaptureState()
             bubbleServiceScope.launch {
                 val description = runCatching { EleneApiClient.describeScreen(bytes, question) }.getOrNull()
+                // Same class of gap as the game loop's reasoning, found in the same live-testing
+                // session: this real result used to just get spoken and thrown away - a
+                // follow-up chat question right after had no way to know what was actually just
+                // seen. Stashed the same way so conversational context can reference it too.
+                if (description != null) {
+                    lastVisualInsight = description
+                    lastVisualInsightAtMs = System.currentTimeMillis()
+                }
                 speakOut(description ?: "I couldn't make sense of what's on screen.")
             }
             return
@@ -1390,6 +1438,8 @@ class ScifiAccessibilityService : AccessibilityService() {
                 stopGameLoop("Lost the connection while deciding a move - stopping.")
                 return@launch
             }
+            lastVisualInsight = decision.reasoning
+            lastVisualInsightAtMs = System.currentTimeMillis()
             applyGameMove(decision, frameWidth, frameHeight, fullWidth, fullHeight)
         }
     }

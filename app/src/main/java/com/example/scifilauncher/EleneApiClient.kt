@@ -107,6 +107,34 @@ object EleneApiClient {
         }
     }
 
+    /** Called right after a real fingerprint approval of an update proposal (see
+     * UpdateProposalLog / MainActivity's onApprove hooks) - bridges the approval to the
+     * backend, which files a real GitHub issue a scheduled cloud agent polls for. Silent
+     * best-effort: if this fails, the proposal is still marked APPROVED on-device (the
+     * fingerprint gate already did its job), it just won't reach the automated build pipeline
+     * until someone notices and re-triggers it another way. */
+    suspend fun submitUpdateRequest(proposalId: Long, title: String, description: String, category: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val root = JSONObject().apply {
+                    put("proposal_id", proposalId)
+                    put("title", title)
+                    put("description", description)
+                    put("category", category)
+                }
+                val body = RequestBody.create(jsonMediaType, root.toString())
+                val request = Request.Builder()
+                    .url("$ELENE_BASE_URL/elene/submit_update_request")
+                    .post(body)
+                    .build()
+
+                client.newCall(request).execute().use { response -> response.isSuccessful }
+            } catch (e: Exception) {
+                Log.e("EleneApiClient", "submit_update_request call failed", e)
+                false
+            }
+        }
+
     /** Fetches ElevenLabs-synthesized speech audio (mp3 bytes) for [text], or null if
      * the backend isn't configured for TTS / the call fails - caller should fall back
      * to the on-device system voice in that case. */

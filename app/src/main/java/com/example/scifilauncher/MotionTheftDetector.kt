@@ -134,7 +134,12 @@ object MotionTheftDetector : SensorEventListener {
             .setContentText("Sudden movement detected. Tap to confirm it's you, or this locks down in 10 minutes.")
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
+            // Deliberately NOT setAutoCancel(true) - real bug found live: that dismissed the
+            // notification the instant it was tapped, before the fingerprint prompt it opens
+            // had actually succeeded. If that prompt gets cancelled or fails, the notification
+            // was already gone with no way to retry from it. Only onConfirmed() (a real
+            // successful fingerprint match) should ever remove this - see its own
+            // NotificationManagerCompat.cancel() call below.
             .setContentIntent(pendingIntent)
             .build()
         runCatching {

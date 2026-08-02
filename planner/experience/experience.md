@@ -746,6 +746,52 @@
   short command, which matches the honest limitation already documented above, not a new
   regression.
 
+- (2026-08-02) Updates screen Stage 2 built - a real, working backend-only self-update pipeline,
+  per the plan logged in `planner/not_started/not_started.md` (2026-08-01 entry) after the user's
+  explicit call to keep fingerprint verification rather than remove it. Real chain, each piece
+  built and connected in order:
+  1. `backend/elene/main.py` gained `/elene/submit_update_request` - called only after a real
+     on-device fingerprint approval (never anything else), creates a real GitHub issue labeled
+     `approved-backend-update` on the repo. Uses the existing `GITHUB_PAT` secret, newly bound to
+     the `elene-backend` Cloud Run service via `--set-secrets` (properly, via Secret Manager
+     reference - not as a plaintext env var like the service's other existing secrets already
+     were, a small security improvement made just for this new addition).
+  2. `MainActivity.kt`'s two `onApprove` hooks (the immediate-prompt path and the Updates-screen
+     review path) both now call a new `EleneApiClient.submitUpdateRequest()` right after the
+     existing `UpdateProposalLog.updateStatus(..., APPROVED)` call - best-effort, the on-device
+     approval already happened regardless of whether this bridge call succeeds.
+  3. A real scheduled cloud agent (routine `trig_01XxHRhbPpqZWmDnmVBSCqSe`, hourly) polls for
+     open issues with that label, and for each: implements the change in `backend/elene/` only,
+     self-tests it against a real local run (not assumed), deploys via `gcloud run deploy`, then
+     verifies against the actual live Cloud Run URL before commenting and closing the issue -
+     explicitly scoped to never touch app/Kotlin code or any other GCP resource, and to leave an
+     issue open with a clear comment (never silently fail or fake success) if anything - scope,
+     local test, gcloud availability, or post-deploy verification - doesn't check out.
+  Real, honest scope boundary surfaced and agreed before building anything: a cloud agent has no
+  access to the physical phone at all, so this only covers backend/Cloud Run changes - app-side
+  (APK) self-update would need either a real local Claude Code session or the separately-deferred
+  remote-auto-update mechanism (still not started, its own real security-design pass), which the
+  user explicitly confirmed as the next thing to tackle after this.
+  Real infrastructure problems hit and fixed along the way, not just a clean build: (1) the
+  routine's first two creation attempts failed - GitHub wasn't connected to Claude at all
+  (fixed by the user installing the Claude GitHub App), then failed again with a repo-access
+  error once it was; (2) root cause for the second failure was real and unexpected - the
+  repo had actually moved, both a different GitHub username (`Xenos-deathcode` -> `xenos-hackcode`,
+  a rename that happened a while ago) and a different repo name
+  (`SciFiLauncher` -> `Elene-sifilaucher`) - the local git remote and the backend's hardcoded
+  `GITHUB_REPO` constant were both still pointing at the old, stale path this whole session
+  without either of us noticing, since local git operations never actually needed to push/fetch
+  against it. Fixed both, redeployed. (3) The existing `GITHUB_PAT` secret (created 2026-07-10,
+  likely scoped under the old username) genuinely didn't have permission to create issues/labels
+  on the real repo (`403: Resource not accessible by personal access token`, confirmed via a
+  direct API test, not assumed) - the user generated a fresh classic PAT with `repo` scope, which
+  was verified working via a real label-creation call before being wired in.
+  **Not yet confirmed live end-to-end**: no real proposal has gone through the full chain yet
+  (approve on phone -> issue created -> picked up by the hourly routine -> implemented, tested,
+  deployed, verified, issue closed) - the user's GCP billing needs resolving first before any of
+  this can be exercised for real, same blocker as the other pending live-test items from this
+  session.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

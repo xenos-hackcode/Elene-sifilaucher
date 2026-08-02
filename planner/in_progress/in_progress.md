@@ -92,6 +92,29 @@ result in `experience.md`) as they're actually tested — don't mark done from a
       restored after. **Caution**: this deliberately manipulates the real lockscreen — coordinate
       timing with the user before triggering, don't do it unattended.
 
+## Blocked on GCP billing, ready to test once it's paid (2026-08-01)
+Built, installed, no crash - but not yet live-tested since the user's GCP bill needs paying
+before backend calls are reliable enough to test against:
+- The shared "last_visual_insight" context fix - bridges the real gap between
+  `/elene/game_move`/`/elene/describe_screen` (vision-based) and `/elene/chat` (conversational)
+  having zero shared context by default, found live via the user's own astute "two AIs fighting
+  for control" observation while testing screen perception. Backend deployed (revision
+  `elene-backend-00035-6xt`), app installed. **Not yet confirmed**: does asking "what's on my
+  screen" mid-game now actually answer from the game loop's own real reasoning instead of giving
+  a blind/disconnected answer.
+- Also still open from the same testing round, not yet re-confirmed after the prompt fixes:
+  does `describe_screen` reliably re-trigger on every repeat "what's on my screen" ask instead
+  of reusing a stale result (two prompt iterations already tried - the first stopped outright
+  fabrication, but repeat asks still weren't reliably re-triggering the real command); does
+  reusing an already-active game-loop capture session (instead of re-requesting MediaProjection
+  consent) actually stop the disruptive mid-game consent-dialog interruption.
+- Updates screen Stage 2 (real backend self-update pipeline, built 2026-08-02) - end to end,
+  untested: approve a real proposal on the phone -> confirm a GitHub issue actually gets created
+  -> wait for the hourly routine (`trig_01XxHRhbPpqZWmDnmVBSCqSe`) to pick it up -> confirm it
+  implements/tests/deploys/verifies correctly and comments+closes the issue. See experience.md
+  2026-08-02 entry for the real infra problems already found and fixed getting this far (stale
+  repo path, under-permissioned PAT).
+
 ## Blocked, needs a decision (not being worked on until resolved)
 Wake-word *engine* upgrade (a real trained "Hey Imperial"-style model, not the current STT-polling
 approximation used for "Hey Elene"): needs training data (50+ recorded samples of the phrase) and a

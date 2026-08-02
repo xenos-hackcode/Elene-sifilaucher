@@ -1523,7 +1523,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     actionLabel = "$actionWord: $title",
                                     reason = description,
                                     target = id.toString(),
-                                    onApprove = { UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.APPROVED) },
+                                    onApprove = {
+                                        UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.APPROVED)
+                                        // Updates screen Stage 2 (2026-08-01): bridges this real
+                                        // fingerprint approval to the backend, which files a
+                                        // GitHub issue a scheduled cloud agent polls for. Best-
+                                        // effort - the approval itself already happened above
+                                        // regardless of whether this call succeeds.
+                                        scope.launch {
+                                            EleneApiClient.submitUpdateRequest(id, title, description, category.name)
+                                        }
+                                    },
                                     onDeny = { UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.DENIED) }
                                 )
                             } else {
@@ -2471,6 +2481,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                         target = entry.id.toString(),
                                         onApprove = {
                                             UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.APPROVED)
+                                            // Same Stage 2 bridge as the immediate-prompt path above.
+                                            scope.launch {
+                                                EleneApiClient.submitUpdateRequest(entry.id, entry.title, entry.description, entry.category.name)
+                                            }
                                         },
                                         onDeny = {
                                             UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.DENIED)

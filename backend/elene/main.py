@@ -18,6 +18,15 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_FEMALE1_VOICE_ID")
 
+# Updates screen Stage 2 (2026-08-01): bridges a fingerprint-approved backend-change request
+# from the phone (which has no GitHub/GCP access of its own) to a scheduled cloud agent (which
+# has no phone access at all) - the only thing they share is this backend. Approval creates a
+# real GitHub issue the agent polls for; deliberately not a raw file/DB write, since GitHub
+# issues already give free state (open/closed) and a natural audit trail.
+GITHUB_PAT = os.getenv("GITHUB_PAT")
+GITHUB_REPO = "xenos-hackcode/Elene-sifilaucher"
+UPDATE_REQUEST_LABEL = "approved-backend-update"
+
 app = FastAPI()
 
 # In-memory per-user conversation history so Elene remembers recent turns. Resets if
@@ -54,6 +63,12 @@ class GameMoveRequest(BaseModel):
     image_base64: str
     game_hint: Optional[str] = None
     recent_moves: List[str] = []
+
+class SubmitUpdateRequest(BaseModel):
+    proposal_id: int
+    title: str
+    description: str
+    category: str
 
 # ---- ENDPOINT ----
 
@@ -221,21 +236,41 @@ Rules:
     "what's on my screen", "read this to me", "what does this say", "describe_screen:what's
     the total on this receipt". This is the ONLY way Elene can actually see the screen - every
     other command works off text/labels, never pixels. CRITICAL: you have NO real information
-    about what is currently on screen unless this command has just been run and its result
-    given back to you as context - you cannot see it, guess it, or infer it from earlier
-    conversation. Any request even loosely about "what's on screen" MUST use this command in
-    "command" mode - never answer in "chat" mode with a plausible-sounding guess about what
-    might be visible (e.g. never say something like "looks like a game screen" without having
-    actually used this command first - that is a fabricated answer, not a real one, and this
-    has been confirmed happening, which is exactly the failure mode this rule exists to stop).
-    Use it whenever the request is
-    genuinely about looking at something rather than a command you already know how to run.)
+    about what is currently on screen unless this exact request just triggered this command and
+    its result was given back to you as context for THIS turn - you cannot see it, guess it, or
+    infer it from earlier conversation, and a describe_screen result from a PAST turn is stale
+    the instant the conversation moves on, since the user's real screen can (and often does)
+    change between turns. This means every single new "what's on my screen"-shaped request
+    needs its own fresh describe_screen call, every time, even if one was already run earlier in
+    this same conversation and even if the request sounds like a repeat of something already
+    asked - never reuse an old result, and never answer in "chat" mode with a plausible-sounding
+    guess about what might be visible now (e.g. never say something like "looks like a game
+    screen" or list apps from installed_apps/recently_opened_apps as if they were seen on
+    screen, without having actually just used this command for this exact turn - that is a
+    fabricated answer, not a real one, and this has been confirmed happening more than once,
+    which is exactly the failure mode this rule exists to stop). Use it whenever the request is
+    genuinely about looking at something rather than a command you already know how to run.
+    ONE real exception: the internal context may include last_visual_insight (with
+    last_visual_insight_age_seconds) - this is genuine, real vision output from either the game-
+    playing loop's most recent move or a describe_screen call, still fresh (under 2 minutes
+    old). This is real data, not a guess, so if it directly answers the question (e.g. "what's
+    on my screen" while a game is actively being played), you may answer from it directly in
+    "chat" mode instead of triggering a new describe_screen call - just don't stretch it to
+    answer something it doesn't actually cover, and don't treat it as fresh once
+    last_visual_insight_age_seconds is more than a few seconds old for anything precision-
+    sensitive (exact text, exact numbers) - trigger a fresh describe_screen for those instead.)
   - "play_game" or "play_game:<hint>" (the user asks Elene to play a game for them, e.g. "play
     this for me", "can you play this game", "play_game:candy crush". IMPORTANT: only offer or
-    accept this for slow, turn-based games (word games, match-3 without a timer, card games,
-    puzzles) - Elene thinks for 1-4+ seconds per move since it involves a real screenshot and a
-    real decision each time, which does not work for fast/reflex/timed games. If the user asks
-    for a fast-paced game, say so honestly rather than issuing the command.)
+    accept this for slow, turn-based games (word games, match-3, card games, puzzles) - Elene
+    thinks for 1-4+ seconds per move since it involves a real screenshot and a real decision
+    each time, which does not work for fast/reflex/timed games (e.g. an endless runner, a
+    rhythm game, anything with a countdown clock per move). Most popular mobile match-3/puzzle
+    games (Candy Crush, Royal Match, Toon Blast, and similar) are move-limited, not
+    time-pressured per move, so treat those as compatible by default rather than guessing
+    they're too fast. If genuinely unsure whether a specific game is turn-based or reflex-based
+    from its name alone, ask the user directly ("is this move-based or does it need fast
+    reactions?") rather than unilaterally refusing on a guess - a wrong refusal is worse than a
+    quick clarifying question, since the user can already see the game and knows for certain.)
   - "stop_game" (the user asks Elene to stop playing/stop the game loop - distinct from
     stop_listening, which dismisses the mic entirely rather than just ending a play session.)
 - Turning the phone itself off/rebooting it is NOT possible for any app on a normal,
@@ -445,6 +480,54 @@ async def alert_email(body: AlertEmailRequest) -> Dict[str, Any]:
         return {"ok": True}
     except Exception as e:
         print("Error sending alert email:", e)
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/elene/submit_update_request")
+async def submit_update_request(body: SubmitUpdateRequest) -> Dict[str, Any]:
+    """Called only after a real fingerprint approval on the phone (see UpdateProposalLog /
+    MainActivity's onApprove hooks) - this endpoint itself does not re-verify anything, the
+    phone-side fingerprint gate already did. Creates a real GitHub issue, labeled
+    UPDATE_REQUEST_LABEL, that a scheduled cloud agent polls for - this is the only bridge
+    available, since the phone has no GitHub/GCP access and the cloud agent has no phone access.
+    A backend-only scope by design: the cloud agent can build+self-test+deploy a Cloud Run
+    change autonomously, but has no way to get a change onto the physical device, so this is
+    intentionally not used for app-side (APK) proposals yet - see planner/not_started.md for the
+    real reasoning (that's the separately-deferred remote-auto-update decision, not this one)."""
+    if not GITHUB_PAT:
+        return {"ok": False, "error": "GITHUB_PAT is not configured on this backend yet."}
+
+    issue_body = (
+        f"**Category:** {body.category}\n"
+        f"**Proposal ID:** {body.proposal_id}\n\n"
+        f"{body.description}\n\n"
+        f"---\n"
+        f"Approved via fingerprint on-device (UpdateProposalLog id {body.proposal_id}) - this "
+        f"issue was created automatically as a result, not raised manually. Scope: this is a "
+        f"backend-only (Cloud Run / backend/elene/main.py) change request - if what's actually "
+        f"needed is an Android app change, close this and handle it in a real Claude Code "
+        f"session with device access instead, since a cloud agent has no way to get a build "
+        f"onto the physical phone."
+    )
+    try:
+        response = requests.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+            headers={
+                "Authorization": f"Bearer {GITHUB_PAT}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={
+                "title": f"[Approved update] {body.title}",
+                "body": issue_body,
+                "labels": [UPDATE_REQUEST_LABEL],
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        issue_url = response.json().get("html_url")
+        return {"ok": True, "issue_url": issue_url}
+    except Exception as e:
+        print("Error creating GitHub issue for update request:", e)
         return {"ok": False, "error": str(e)}
 
 
