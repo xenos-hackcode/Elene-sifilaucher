@@ -29,6 +29,14 @@ UPDATE_REQUEST_LABEL = "approved-backend-update"
 
 app = FastAPI()
 
+
+@app.get("/pink")
+async def pink() -> Dict[str, Any]:
+    """Approved update request (issue #3, proposal 1785706769554) - a trivial
+    reachability check endpoint, distinct name from a generic /health so it's
+    obvious in logs/curl which approved request it corresponds to."""
+    return {"status": "okay"}
+
 # In-memory per-user conversation history so Elene remembers recent turns. Resets if
 # this Cloud Run instance recycles/scales to zero - fine for a personal assistant, not
 # a durability guarantee. Keyed by user_id, trimmed to the last N turns.
