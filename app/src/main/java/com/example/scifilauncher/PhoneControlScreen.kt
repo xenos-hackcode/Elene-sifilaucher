@@ -49,7 +49,12 @@ import java.util.concurrent.TimeUnit
 enum class PhoneControlConnState { DISCONNECTED, CONNECTING, WAITING_FOR_AGENT, CONNECTED }
 
 /** Controller side of the phone-link relay - pure network plumbing, mirrors LaptopControlClient
- * but reversed: sends tap/swipe/key commands as JSON text, receives screen frames as bytes. */
+ * but reversed: sends tap/swipe/key commands as JSON text, receives screen frames as bytes.
+ *
+ * Auto-reconnects on drop with capped exponential backoff (2s -> 30s) - same reasoning as
+ * LaptopControlClient: the relay is over the public internet, so a drop is expected to happen
+ * occasionally and should recover on its own instead of leaving the screen stuck on
+ * "Disconnected". `disconnect()` cancels any pending reconnect on the way out. */
 class PhoneControlClient(private val token: String) {
     private var ws: WebSocket? = null
     var onState: ((PhoneControlConnState) -> Unit)? = null
@@ -59,13 +64,19 @@ class PhoneControlClient(private val token: String) {
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
+    private val reconnectHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+    private var userDisconnected = false
+
     fun connect() {
+        userDisconnected = false
         onState?.invoke(PhoneControlConnState.CONNECTING)
         val request = Request.Builder()
             .url("wss://elene-backend-717899371194.us-central1.run.app/phone/ws/controller/$token")
             .build()
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                 onState?.invoke(PhoneControlConnState.WAITING_FOR_AGENT)
             }
 
@@ -89,18 +100,35 @@ class PhoneControlClient(private val token: String) {
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 android.util.Log.w("PhoneControlClient", "WS closed: code=$code reason=$reason")
                 onState?.invoke(PhoneControlConnState.DISCONNECTED)
+                scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 android.util.Log.e("PhoneControlClient", "WS failure: response=$response", t)
                 onState?.invoke(PhoneControlConnState.DISCONNECTED)
+                scheduleReconnect()
             }
         })
     }
 
+    private fun scheduleReconnect() {
+        if (userDisconnected) return
+        reconnectHandler.postDelayed({
+            if (!userDisconnected) connect()
+        }, reconnectDelayMs)
+        reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+    }
+
     fun disconnect() {
+        userDisconnected = true
+        reconnectHandler.removeCallbacksAndMessages(null)
         runCatching { ws?.close(1000, null) }
         ws = null
+    }
+
+    companion object {
+        private const val INITIAL_RECONNECT_DELAY_MS = 2000L
+        private const val MAX_RECONNECT_DELAY_MS = 30000L
     }
 
     private fun send(json: JSONObject) {

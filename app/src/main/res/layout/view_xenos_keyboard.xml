@@ -1,11 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/xenos_root"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/xenos_outer_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="4dp"
     android:background="#FF000000">
+
+    <!-- Hacker/cyber vibe: real falling matrix rain behind the keys, this is Xenos's whole
+         point - Cedal (the professional keyboard) deliberately does not have this. -->
+    <com.example.scifilauncher.MatrixRainView
+        android:id="@+id/xenos_rain"
+        android:layout_width="match_parent"
+        android:layout_height="200dp" />
+
+    <LinearLayout
+        android:id="@+id/xenos_root"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="4dp"
+        android:background="@android:color/transparent">
 
     <!-- Xenos toolbar: Clipboard + Settings -->
     <LinearLayout
@@ -59,6 +72,7 @@
                 android:weightSum="10">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_1"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -68,6 +82,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_2"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -77,6 +92,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_3"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -86,6 +102,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_4"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -95,6 +112,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_5"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -104,6 +122,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_6"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -113,6 +132,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_7"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -122,6 +142,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_8"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -131,6 +152,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_9"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -140,6 +162,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_0"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -157,6 +180,7 @@
                 android:weightSum="10">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_q"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -166,6 +190,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_w"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -175,6 +200,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_e"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -184,6 +210,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_r"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -193,6 +220,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_t"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -202,6 +230,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_y"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -211,6 +240,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_u"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -220,6 +250,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_i"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -229,6 +260,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_o"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -238,6 +270,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_p"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -257,6 +290,7 @@
                 android:paddingEnd="12dp">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_a"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -266,6 +300,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_s"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -275,6 +310,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_d"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -284,6 +320,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_f"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -293,6 +330,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_g"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -302,6 +340,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_h"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -311,6 +350,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_j"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -320,6 +360,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_k"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -329,6 +370,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_l"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -348,6 +390,7 @@
                 android:paddingEnd="32dp">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_z"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -357,6 +400,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_x"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -366,6 +410,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_c"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -375,6 +420,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_v"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -384,6 +430,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_b"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -393,6 +440,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_n"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -402,6 +450,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_m"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -421,6 +470,7 @@
                 android:paddingEnd="8dp">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_shift"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -430,6 +480,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_theme"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -439,6 +490,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_space"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -448,6 +500,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_delete"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -457,6 +510,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/key_enter"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -483,6 +537,7 @@
                 android:weightSum="10">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_exclam"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -492,6 +547,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_at"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -501,6 +557,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_hash"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -510,6 +567,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_dollar"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -519,6 +577,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_percent"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -528,6 +587,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_amp"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -537,6 +597,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_star"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -546,6 +607,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_lparen"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -555,6 +617,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_rparen"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -564,6 +627,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_underscore"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -581,6 +645,7 @@
                 android:weightSum="10">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_plus"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -590,6 +655,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_minus"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -599,6 +665,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_equal"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -608,6 +675,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_slash"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -617,6 +685,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_backslash"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -626,6 +695,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_pipe"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -635,6 +705,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_tilde"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -644,6 +715,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_lt"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -653,6 +725,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_gt"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -662,6 +735,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_pm"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -679,6 +753,7 @@
                 android:weightSum="10">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_comma"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -688,6 +763,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_dot"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -697,6 +773,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_question"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -706,6 +783,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_colon"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -715,6 +793,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_semicolon"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -724,6 +803,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_quote"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -733,6 +813,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_dquote"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -742,6 +823,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_ellipsis"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -751,6 +833,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_bullet"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -760,6 +843,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_hyphen"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -779,6 +863,7 @@
                 android:paddingEnd="8dp">
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_to_letters"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -788,6 +873,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_space"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -797,6 +883,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_delete"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -806,6 +893,7 @@
                     android:background="@drawable/xenos_key_black" />
 
                 <Button
+                    android:fontFamily="monospace"
                     android:id="@+id/sym_enter"
                     android:layout_width="0dp"
                     android:layout_height="48dp"
@@ -832,41 +920,134 @@
                 android:padding="4dp" />
         </ScrollView>
 
-        <!-- Small settings overlay -->
+        <!-- Settings overlay: Tiles toggle + real hacker text tools, all operate on whatever
+             text is currently selected in the field being typed into. -->
         <LinearLayout
             android:id="@+id/xenos_settings_overlay"
             android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
             android:padding="8dp"
             android:background="#CC000000"
             android:visibility="gone">
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingBottom="8dp">
+
+                <TextView
+                    android:id="@+id/txt_tiles"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tiles"
+                    android:textColor="#FF09C20C"
+                    android:textSize="12sp" />
+
+                <Switch
+                    android:id="@+id/switch_color_mode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp" />
+
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/btn_change_mode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:text="Change mode"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
             <TextView
-                android:id="@+id/txt_tiles"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Tiles"
+                android:text="TOOLS - select text first, then tap:"
                 android:textColor="#FF09C20C"
-                android:textSize="12sp" />
+                android:fontFamily="monospace"
+                android:textSize="10sp"
+                android:paddingBottom="4dp" />
 
-            <Switch
-                android:id="@+id/switch_color_mode"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp" />
+                android:orientation="horizontal"
+                android:weightSum="3">
 
-            <Button
-                android:id="@+id/btn_change_mode"
-                android:layout_width="wrap_content"
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/tool_base64_enc"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="4dp"
+                    android:text="B64 ENC"
+                    android:textSize="10sp"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/tool_base64_dec"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="4dp"
+                    android:text="B64 DEC"
+                    android:textSize="10sp"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/tool_rot13"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="40dp"
+                    android:text="ROT13"
+                    android:textSize="10sp"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="Change mode"
-                android:textColor="#FF09C20C"
-                android:background="@drawable/xenos_key_black" />
+                android:layout_marginTop="4dp"
+                android:orientation="horizontal"
+                android:weightSum="2">
+
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/tool_hash"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="4dp"
+                    android:text="SHA-256"
+                    android:textSize="10sp"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+
+                <Button
+                    android:fontFamily="monospace"
+                    android:id="@+id/tool_leet"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="40dp"
+                    android:text="l33t"
+                    android:textSize="10sp"
+                    android:textColor="#FF09C20C"
+                    android:background="@drawable/xenos_key_black" />
+            </LinearLayout>
         </LinearLayout>
 
     </FrameLayout>
 
-</LinearLayout>
+    </LinearLayout>
+
+</FrameLayout>

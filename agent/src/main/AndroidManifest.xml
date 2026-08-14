@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="false"
@@ -19,6 +21,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="Phone Link Agent">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -42,7 +45,12 @@
         <service
             android:name=".ScreenCaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="false" />
+        <!-- stopWithTask="false": without this, swiping the app away from Recents kills the
+             capture/control session outright, even though it's a real foreground service -
+             found live 2026-08-10. The whole point of this app is running unattended while the
+             owner isn't actively looking at it. -->
 
     </application>
 </manifest>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Xenos Controller"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+        <!-- A normal launchable app - deliberately NOT android.intent.category.HOME and no
+             Device Admin/Accessibility Service of any kind. This only ever VIEWS/SENDS commands
+             to something already running the agent side (laptop_agent's PC exe, or the phone
+             link agent app) - it never captures or controls this device's own screen, so it
+             genuinely needs nothing beyond internet access. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="Xenos Controller">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>

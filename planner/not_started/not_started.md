@@ -103,17 +103,107 @@ last piece of this section is still genuinely not started:
   blindly — findings from earlier tools in that order should genuinely inform what the later ones
   focus on, not run as five disconnected checklist items.
 
-## Updates screen Stage 2 — built 2026-08-02, see done.md/experience.md, not yet live-tested
+## Updates screen Stage 2 — built 2026-08-02, real gap found and worked around 2026-08-07/08
 
 Requested 2026-08-01, built 2026-08-02 - moved to `planner/done/done.md`. The section below is
-kept as the original design record; see `planner/experience/experience.md`'s 2026-08-02 entry for
-what was actually built, the real infrastructure problems hit along the way (repo had silently
-moved to a new owner/name, the old GitHub PAT lacked permissions), and what's still not confirmed
-(no real proposal has gone through the full chain end-to-end yet - blocked on the same GCP billing
-issue as everything else pending this session). The Updates screen (`Security > Activity > Updates`, built 2026-07-27) is
-currently Stage 1 only: a fingerprint-gated approval queue with no code-generation/build/deploy
-pipeline behind an approved entry - proposals just sit there. This is the planned Stage 2: give
-that pipeline a real body, without touching the fingerprint gate itself.
+kept as the original design record; see `planner/experience/experience.md`'s 2026-08-02 and
+2026-08-07/08 entries for what was actually built and the real infrastructure problems found. The
+Updates screen (`Security > Activity > Updates`, built 2026-07-27) is currently Stage 1 only: a
+fingerprint-gated approval queue with no code-generation/build/deploy pipeline behind an approved
+entry - proposals just sit there. This was the planned Stage 2: give that pipeline a real body,
+without touching the fingerprint gate itself.
+
+**Real, confirmed finding (2026-08-08), not assumed**: the approve → GitHub-issue → scheduled-
+agent → implement → self-test chain genuinely works - verified via a real issue's full comment
+history (issue #3), not just trusted. What does NOT work unattended: the deploy step. The
+scheduled cloud agent's own execution sandbox has never had `gcloud` installed, so it correctly
+implements and locally verifies every change but can never deploy it - confirmed by 19+
+consecutive hourly runs (spanning ~21 hours) all hitting the identical wall and honestly reporting
+it instead of faking success. One of those runs did commit its verified change to `master`
+without deploying it; a session with real `gcloud` access (this one) applied that same change onto
+the current `main.py` (which had gained an unrelated endpoint since) and deployed it manually,
+confirmed live via a real HTTP request, then closed issue #3 with that evidence.
+
+**Attempted 2026-08-08, proven not viable, reverted same day.** The user chose fully unattended
+deploy and it was built (service account + IAM, key embedded in the routine's prompt) - but a
+follow-up diagnostic proved `gcloud` cannot be installed in the routine's sandbox at all (hard 403
+network-policy block on every official Google Cloud SDK distribution channel), so the credential
+could never actually have been used regardless of how well it was scoped. The exposed key was
+revoked and the routine's prompt reverted to honestly reporting "gcloud unavailable" instead of
+pretending this works. Full corrected account in `planner/done/done.md`; debugging story (both the
+IAM-scoping dead end and the gcloud-availability dead end) in `planner/experience/experience.md`.
+
+**Real, untested-but-newly-promising idea** (surfaced by the user): instead of running the
+Android/gcloud-dependent work *inside* the restricted routine sandbox, build a custom container
+image with everything pre-installed (Android SDK/NDK) - built once, from a normal session with
+working internet access, not the restricted sandbox - and have the routine trigger a **Cloud
+Build** job using that image, since Cloud Build runs on Google's own infrastructure with its own
+network path, not the sandbox's.
+
+**Confirmed 2026-08-09, real evidence, genuinely good news**: the one open question this idea
+depended on - can the sandbox reach Google's *API* hosts even though it can't reach Google's
+*software-distribution* hosts - is yes. A dedicated reachability diagnostic hit `dl.google.com`
+(known-blocked baseline) and got a real gateway rejection (curl exit 56, `HTTP_CODE:000`) in ~30ms,
+confirming the test methodology - then hit `cloudbuild.googleapis.com`, `oauth2.googleapis.com`,
+`run.googleapis.com`, `artifactregistry.googleapis.com`, `storage.googleapis.com`,
+`www.googleapis.com`, and `accounts.google.com`, and every single one returned a real HTTP response
+(404s/400s/302 - all mean a genuine TLS handshake + HTTP round-trip against the real service, not a
+gateway block). So the egress policy blocks *software downloads* specifically (`dl.google.com`,
+`maven.google.com`, `packages.cloud.google.com`, `sdk.cloud.google.com`), not Google's API surface
+generally - meaning a raw authenticated HTTPS call to Cloud Build's REST API (bypassing the
+`gcloud` CLI entirely, using a service-account JWT signed and exchanged for a token via
+`oauth2.googleapis.com` - no CLI needed) is a real, technically viable path, not just a hope.
+
+**Confirmed 2026-08-09, mechanism proven, not just reachable.** An attempt to test this via an
+unattended routine (embedding a fresh key in a scheduled diagnostic, same pattern as the earlier
+gcloud test) was blocked by Claude Code's own auto-mode safety classifier - a reasonable block,
+given the identical pattern already caused a real problem earlier the same day. Retested instead
+**interactively**, in a real session with the user directly present approving each step: generated
+a short-lived key for `elene-backend-deployer`, used Python's `google-auth` library (already
+installed, no new dependency) to load service-account credentials and wrap them in an
+`AuthorizedSession` - zero `gcloud` CLI involvement - then POSTed a trivial build
+(`echo hello from cloud build reachability test`) directly to
+`https://cloudbuild.googleapis.com/v1/projects/cedal-fd4a2/builds`. Real HTTP 200, a real build ID
+(`3493031b-9011-4bd9-ac99-5e78b1dfd526`) came back, and polling confirmed it reached `SUCCESS` in
+~20 seconds (2 poll cycles) - not assumed from the initial response, actually watched through to a
+terminal state with a real Cloud Build console log URL. Key revoked immediately after, same
+discipline as every other test key this session.
+
+**Real conclusion**: the mechanism itself - JWT-based service-account auth + raw REST calls to
+trigger and monitor Cloud Build, no `gcloud` CLI needed anywhere - genuinely works. Combined with
+the already-confirmed reachability of these exact hosts from the real restricted routine sandbox
+(previous entry above) and already-confirmed `pip`/PyPI access in that same class of sandbox (used
+successfully by the backend pipeline's own self-test step), this is about as close to "proven
+viable" as it can get without literally running it inside the production routine.
+
+**Confirmed 2026-08-09, the whole idea is now proven end to end - not just the auth mechanism, the
+actual app build.** Built a real Android SDK/NDK builder container image (`eclipse-temurin:17-jdk`
+base + Android cmdline-tools + exactly this project's own versions - `platforms;android-34`,
+`build-tools;34.0.0`, `ndk;27.1.12297006`, `cmake;3.22.1`, matching `app/build.gradle.kts` exactly),
+built via Cloud Build itself (`gcloud builds submit --tag`, using the normal user session's own
+already-authenticated `gcloud` - no new service-account key needed for this part) and pushed to a
+new dedicated Artifact Registry repo (`us-central1-docker.pkg.dev/cedal-fd4a2/android-builder/
+android-sdk-ndk`). Built clean in 4 minutes.
+
+Then used that image to actually build **this real app** via Cloud Build - not a toy project.
+Submitted the real repo source (`.gitignore` already excludes `build/`, `.gradle/`, `.cxx/`, `.env`,
+keeping the upload reasonable) with a Cloud Build config running `./gradlew :app:assembleDebug`
+inside the custom image. Real result: `BUILD SUCCESSFUL in 2m 53s`, all 42 Gradle tasks executed,
+the native RNNoise C code compiled cleanly via CMake/ninja (only pre-existing compiler warnings, no
+errors), and a genuine debug APK was produced (`app-debug.apk`, 66,982,096 bytes, sitting exactly
+where Gradle puts it). The overall Cloud Build run showed as "FAILURE" only because the diagnostic
+script's own last line (`file *.apk`, a sanity-check command) wasn't installed in the minimal image
+- a gap in the verification script, not in the actual build, confirmed by reading the real log
+output line by line rather than trusting the top-level status alone.
+
+**Real conclusion**: the complete idea - JWT-based REST-API auth (no `gcloud` CLI) triggering a
+Cloud Build job that runs this exact app's real Gradle build (native code, ONNX assets, everything)
+inside a custom pre-baked image - works, proven with real evidence at every step, not assumed at
+any point. This closes the loop the user's original idea opened.
+
+**Wired into the actual production routine, 2026-08-09** (user's explicit "yh start" go-ahead, after
+the mechanism above was proven both interactively and via a real container build/test). See
+`done.md` for the full account, including the exposure disclosure.
 
 Explicitly scoped, after a direct question to the user about the one part that actually matters
 (whether to remove fingerprint verification from self-updates, mirroring how remote auto-update
@@ -167,14 +257,11 @@ scoped-down design conversation with the user before any implementation starts.
   itself now something that can leak independent of whether the phone is ever actually stolen. Some
   of its proposed detection triggers (recovery-mode-boot via boot-count change, "USB debugging
   enabled without user action") aren't reliably detectable on stock, non-rooted Android, meaning
-  they'd be built without a way to verify they actually work. A much smaller, real version of the
-  same idea is already close to buildable: Sequence Mode's existing 30-day wipe already happens: the
-  worthwhile addition is a single encrypted upload of just the intruder photos and location history
-  (not the whole app's data) to the backend that's already trusted, immediately before that
-  already-planned wipe runs, gated behind the same explicit "Full-device wipe" opt-in toggle that
-  already exists in Security. That's worth building. The full evacuate/resurrect/auto-restore-on-
-  new-hardware flow is not, until it's been scoped down and explicitly confirmed the same way this
-  paragraph just did.
+  they'd be built without a way to verify they actually work. The small, scoped-down version (just
+  intruder photos + location history, uploaded right before the existing 30-day wipe, gated behind
+  the existing Full-device wipe toggle) was built 2026-08-07 - see `planner/done/done.md`. The full
+  evacuate/resurrect/auto-restore-on-new-hardware flow is still not started, and still needs its own
+  explicit scoping conversation before any of it is built, same as this paragraph already concluded.
 
 ## Explicitly declined — see the dedicated file
 

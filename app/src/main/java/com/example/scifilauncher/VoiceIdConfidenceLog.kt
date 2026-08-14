@@ -56,6 +56,14 @@ object VoiceIdConfidenceLog {
         return recent.count { !it.passed } >= DRIFT_FAIL_COUNT
     }
 
+    /** Called after a successful re-enrollment - without this, old pre-enrollment failures stay
+     * in the window isDrifting() reads, so the "weaker lately" nudge kept showing even right
+     * after a fresh, good enrollment (real bug, found 2026-08-10). A fresh enrollment is exactly
+     * the fix the drift warning was suggesting, so its own history shouldn't outlive it. */
+    fun clear(context: Context) {
+        context.getSharedPreferences(CONF_PREFS, Context.MODE_PRIVATE).edit().remove(CONF_KEY).apply()
+    }
+
     private fun saveAll(context: Context, list: List<VoiceIdConfidenceEntry>) {
         val arr = JSONArray()
         list.forEach { e ->

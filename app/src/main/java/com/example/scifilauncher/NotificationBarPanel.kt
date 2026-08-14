@@ -1,5 +1,6 @@
 package com.example.scifilauncher
 
+import android.app.Notification
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -7,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -24,15 +26,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -207,6 +213,15 @@ fun NotificationsPanel(
     onOpen: (LastMessageInfo) -> Unit,
     onDismiss: (LastMessageInfo) -> Unit,
     onClearAll: () -> Unit,
+    onFireAction: (Notification.Action) -> Unit,
+    nowPlaying: NowPlayingInfo?,
+    onPlayPause: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onSkipNext: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSetSpeed: (Float) -> Unit,
+    loopEnabled: Boolean,
+    onToggleLoop: () -> Unit,
     onClose: () -> Unit
 ) {
     PullDownPanel(isDark = isDark, align = Alignment.TopStart, onClose = onClose) {
@@ -234,6 +249,22 @@ fun NotificationsPanel(
             }
         }
         Spacer(Modifier.height(16.dp))
+
+        if (nowPlaying != null) {
+            NowPlayingCard(
+                nowPlaying = nowPlaying,
+                themeColor = themeColor,
+                isDark = isDark,
+                onPlayPause = onPlayPause,
+                onSeek = onSeek,
+                onSkipNext = onSkipNext,
+                onSkipPrevious = onSkipPrevious,
+                onSetSpeed = onSetSpeed,
+                loopEnabled = loopEnabled,
+                onToggleLoop = onToggleLoop
+            )
+            Spacer(Modifier.height(16.dp))
+        }
 
         if (!listenerEnabled) {
             NotificationAccessPrompt(themeColor = themeColor, isDark = isDark, onEnableListener = onEnableListener)
@@ -269,7 +300,8 @@ fun NotificationsPanel(
                                 themeColor = themeColor,
                                 isDark = isDark,
                                 onOpen = { onOpen(item) },
-                                onDismiss = { onDismiss(item) }
+                                onDismiss = { onDismiss(item) },
+                                onFireAction = onFireAction
                             )
                         }
                         if (group.items.size > 1) {
@@ -283,7 +315,8 @@ fun NotificationsPanel(
                             themeColor = themeColor,
                             isDark = isDark,
                             onOpen = { onOpen(group.items.first()) },
-                            onDismiss = { group.items.forEach { onDismiss(it) } }
+                            onDismiss = { group.items.forEach { onDismiss(it) } },
+                            onFireAction = onFireAction
                         )
                         GroupToggleLink("SEE ALL (${group.items.size})", themeColor) {
                             expandedGroups[group.packageName] = true
@@ -723,39 +756,253 @@ private fun NotificationRow(
     themeColor: Color,
     isDark: Boolean,
     onOpen: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onFireAction: (Notification.Action) -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = 10.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "${item.appName}${if (item.title.isNotBlank()) " - ${item.title}" else ""}",
+                    color = themeColor,
+                    fontSize = 13.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = item.text,
+                    color = if (isDark) Color.White else Color.Black,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 2
+                )
+            }
             Text(
-                text = "${item.appName}${if (item.title.isNotBlank()) " - ${item.title}" else ""}",
-                color = themeColor,
-                fontSize = 13.sp,
-                fontFamily = FontFamily.Monospace
-            )
-            Text(
-                text = item.text,
-                color = if (isDark) Color.White else Color.Black,
-                fontSize = 12.sp,
+                text = "✕",
+                color = Color.Gray,
+                fontSize = 14.sp,
                 fontFamily = FontFamily.Monospace,
-                maxLines = 2
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(start = 12.dp)
             )
         }
-        Text(
-            text = "✕",
-            color = Color.Gray,
-            fontSize = 14.sp,
-            fontFamily = FontFamily.Monospace,
-            modifier = Modifier
-                .clickable(onClick = onDismiss)
-                .padding(start = 12.dp)
-        )
+
+        // The notification's own real action buttons (e.g. a call's "End call") - the same
+        // PendingIntents the system status bar would fire, not a decorative reproduction.
+        val labeledActions = item.actions.filter { !it.title.isNullOrBlank() }
+        if (labeledActions.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                labeledActions.forEach { action ->
+                    Text(
+                        text = action.title.toString().uppercase(),
+                        color = themeColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(themeColor.copy(alpha = 0.16f))
+                            .clickable { onFireAction(action) }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
     }
+}
+
+/** Real "Now Playing" transport controls (not just an icon) - driven by MediaSessionBridge's
+ * live MediaController, so the scrubber actually seeks the real track instead of just
+ * decorating a static notification. */
+@Composable
+private fun NowPlayingCard(
+    nowPlaying: NowPlayingInfo,
+    themeColor: Color,
+    isDark: Boolean,
+    onPlayPause: () -> Unit,
+    onSeek: (Long) -> Unit,
+    onSkipNext: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSetSpeed: (Float) -> Unit,
+    loopEnabled: Boolean,
+    onToggleLoop: () -> Unit
+) {
+    // While the user is actively dragging, show their drag position instead of the live-
+    // polled one (which would otherwise fight the drag), and only commit the real seek once
+    // they let go.
+    var dragPositionMs by remember(nowPlaying.packageName) { mutableStateOf<Long?>(null) }
+    val displayPositionMs = dragPositionMs ?: nowPlaying.positionMs
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(themeColor.copy(alpha = 0.10f))
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (nowPlaying.albumArt != null) {
+                Image(
+                    bitmap = nowPlaying.albumArt.asImageBitmap(),
+                    contentDescription = nowPlaying.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = nowPlaying.title.ifBlank { nowPlaying.appName },
+                    color = themeColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Text(
+                    text = nowPlaying.artist.ifBlank { nowPlaying.appName },
+                    color = if (isDark) Color.White else Color.Black,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+            }
+        }
+
+        if (nowPlaying.durationMs > 0) {
+            Spacer(Modifier.height(4.dp))
+            Slider(
+                value = displayPositionMs.toFloat().coerceIn(0f, nowPlaying.durationMs.toFloat()),
+                onValueChange = { dragPositionMs = it.toLong() },
+                onValueChangeFinished = {
+                    dragPositionMs?.let { onSeek(it) }
+                    dragPositionMs = null
+                },
+                valueRange = 0f..nowPlaying.durationMs.toFloat(),
+                enabled = nowPlaying.canSeek,
+                colors = SliderDefaults.colors(
+                    thumbColor = themeColor,
+                    activeTrackColor = themeColor,
+                    inactiveTrackColor = Color.Gray.copy(alpha = 0.25f)
+                )
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(formatDurationMs(displayPositionMs), color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text(formatDurationMs(nowPlaying.durationMs), color = Color.Gray, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Real platform MediaSession has no repeat/loop action at all (verified against
+            // the SDK's own api-versions.xml - it only exists in a separate compat library,
+            // and only works there if the target app opted in, which most don't). So this
+            // isn't delegated to the app: while enabled, MainActivity's own polling loop
+            // notices when the track nears its end and calls restartFromBeginning() itself,
+            // using the same real seekTo/play as the scrubber above.
+            if (nowPlaying.canSeek) {
+                Text(
+                    text = "🔁",
+                    color = if (loopEnabled) themeColor else Color.Gray,
+                    fontSize = 20.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (loopEnabled) themeColor.copy(alpha = 0.22f) else Color.Transparent)
+                        .clickable(onClick = onToggleLoop)
+                        .padding(10.dp)
+                )
+            }
+            if (nowPlaying.canSkipPrevious) {
+                Text(
+                    text = "⏮",
+                    color = themeColor,
+                    fontSize = 22.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .clickable(onClick = onSkipPrevious)
+                        .padding(12.dp)
+                )
+            }
+            Text(
+                text = if (nowPlaying.isPlaying) "⏸" else "▶",
+                color = themeColor,
+                fontSize = 26.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .clickable(onClick = onPlayPause)
+                    .padding(12.dp)
+            )
+            if (nowPlaying.canSkipNext) {
+                Text(
+                    text = "⏭",
+                    color = themeColor,
+                    fontSize = 22.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .clickable(onClick = onSkipNext)
+                        .padding(12.dp)
+                )
+            }
+        }
+
+        if (nowPlaying.canSetSpeed) {
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally)
+            ) {
+                listOf(1f, 2f, 3f).forEach { speed ->
+                    val active = kotlin.math.abs(nowPlaying.playbackSpeed - speed) < 0.05f
+                    Box(
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = 64.dp, minHeight = 44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (active) themeColor else themeColor.copy(alpha = 0.14f))
+                            .clickable { onSetSpeed(speed) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${speed.toInt()}X",
+                            color = if (active) Color.Black else themeColor,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatDurationMs(ms: Long): String {
+    val totalSec = ms / 1000
+    val min = totalSec / 60
+    val sec = totalSec % 60
+    return "%d:%02d".format(min, sec)
 }

@@ -57,11 +57,22 @@ class SequenceAlertWorker(context: Context, params: WorkerParameters) : Coroutin
 
 /** One-shot, 10 minutes after MotionTheftDetector's "are you running?" alert - arms Sequence
  * Mode for real only if the owner never confirmed via fingerprint in that window. A no-op if
- * the alert was already resolved (confirmed, or Sequence Mode got armed some other way meanwhile). */
+ * the alert was already resolved (confirmed, or Sequence Mode got armed some other way meanwhile).
+ *
+ * Also respects the Anti-theft mode toggle: if the user turned it OFF after a motion alert had
+ * already started, this worker resolves (cancels) the alert without arming - so Elene won't
+ * push a state change (Standing by -> ACTIVE) the user explicitly silenced. */
 class MotionConfirmTimeoutWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val lockPrefs = applicationContext.getSharedPreferences("lock_prefs", Context.MODE_PRIVATE)
         if (!isMotionAlertPending(lockPrefs)) return Result.success()
+
+        // Anti-theft mode was turned off after the alert started - cancel the alert, don't arm.
+        if (!isAntiTheftModeEnabled(lockPrefs)) {
+            resolveMotionAlert(lockPrefs)
+            SystemEventLog.record(applicationContext, "SequenceMode", "Motion alert cancelled - anti-theft mode turned off")
+            return Result.success()
+        }
 
         resolveMotionAlert(lockPrefs)
         if (!isSequenceModeActive(lockPrefs)) {

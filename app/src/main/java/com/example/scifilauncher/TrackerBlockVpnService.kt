@@ -7,6 +7,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -76,10 +77,20 @@ class TrackerBlockVpnService : VpnService() {
         }.getOrDefault(emptySet())
     }
 
+    // Walks up the domain's own labels (a.b.tracker.com -> b.tracker.com -> tracker.com -> com),
+    // checking each against the Set directly - O(1) per hop, bounded by domain depth (typically
+    // under 6). The blocklist grew from a 71-entry starter list to ~6,500 real AdAway entries;
+    // the old `blockedDomains.any { d.endsWith(".$it") }` scanned the entire set per DNS query,
+    // which is fine at 71 entries but a real, measurable per-query cost at 6,500+ - every DNS
+    // lookup on the device goes through this while the VPN is active.
     private fun isBlocked(domain: String): Boolean {
-        val d = domain.lowercase().trimEnd('.')
-        if (blockedDomains.contains(d)) return true
-        return blockedDomains.any { d.endsWith(".$it") }
+        var suffix = domain.lowercase().trimEnd('.')
+        while (true) {
+            if (blockedDomains.contains(suffix)) return true
+            val dot = suffix.indexOf('.')
+            if (dot < 0) return false
+            suffix = suffix.substring(dot + 1)
+        }
     }
 
     /** Reads the "IP:port" the user typed into Security > Network Protection, if any - a real
@@ -176,7 +187,23 @@ class TrackerBlockVpnService : VpnService() {
         vpnInterface = null
     }
 
-    private fun runLoop(pfd: ParcelFileDescriptor) {
+    // Real evidence 2026-08-11: on this network, direct UDP queries to 1.1.1.1 were timing out
+    // on effectively every real (non-blocklisted) lookup, each eating the full soTimeout before
+    // falling back to 8.8.8.8. Combined with handlePacket() previously running inline on this
+    // loop's own thread, every DNS query - including every OTHER pending query queued up behind
+    // it - stalled for that same 5s+ per lookup. A single webpage fires dozens of parallel DNS
+    // lookups; serialized behind repeated multi-second timeouts, that's exactly the "everything
+    // is slow, especially websites" the user reported. Dispatching each packet onto its own
+    // coroutine here lets independent lookups actually run in parallel instead of queueing
+    // behind whichever one happens to be stuck waiting on a timeout.
+    // suspend + coroutineScope{} (not a bare scope.launch per packet, which was the first fix
+    // attempt) so every per-packet coroutine launched below is a real structured CHILD of this
+    // call - and therefore of `job` in startVpn(), which is what job?.cancel() in stopVpn()
+    // actually cancels. Real evidence 2026-08-11: with the first attempt, toggling blocking off
+    // logged "Stopping tracker-block service" but in-flight DNS forwards kept running and timing
+    // out 5+ seconds AFTER that, because they were children of the independent, never-cancelled
+    // `scope` instead of this loop's own job - orphaned work outliving the "stopped" service.
+    private suspend fun runLoop(pfd: ParcelFileDescriptor) = coroutineScope {
         val input = FileInputStream(pfd.fileDescriptor)
         val output = FileOutputStream(pfd.fileDescriptor)
         val buffer = ByteArray(32767)
@@ -184,7 +211,8 @@ class TrackerBlockVpnService : VpnService() {
         while (isRunning) {
             val length = input.read(buffer)
             if (length <= 0) continue
-            handlePacket(buffer.copyOf(length), output)
+            val packet = buffer.copyOf(length)
+            launch { handlePacket(packet, output) }
         }
     }
 
@@ -253,7 +281,11 @@ class TrackerBlockVpnService : VpnService() {
     private fun queryUpstream(server: String, dnsPayload: ByteArray): ByteArray? = runCatching {
         val socket = DatagramSocket()
         protect(socket)
-        socket.soTimeout = 5000
+        // Real evidence 2026-08-11: on this network, 1.1.1.1 was timing out on effectively every
+        // real lookup - at 5000ms that meant a 5s tax before even trying the fallback. Now that
+        // queries run concurrently (see runLoop) this no longer stalls other lookups, but a new
+        // domain's first resolution still visibly waits on it - 2000ms keeps that bounded.
+        socket.soTimeout = 2000
 
         socket.send(DatagramPacket(dnsPayload, dnsPayload.size, InetSocketAddress(server, 53)))
 

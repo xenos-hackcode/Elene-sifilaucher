@@ -2,7 +2,6 @@ package com.example.scifilauncher
 
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.text.format.DateFormat
 import android.view.LayoutInflater
@@ -12,12 +11,10 @@ import android.widget.Button
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 
 class CedalKeyboardService : InputMethodService() {
 
-    private lateinit var themePrefs: SharedPreferences
     private lateinit var clipboardManager: ClipboardManager
 
     private var capsOn = false
@@ -38,7 +35,6 @@ class CedalKeyboardService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        themePrefs = getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboardManager.addPrimaryClipChangedListener(clipListener)
     }
@@ -59,46 +55,61 @@ class CedalKeyboardService : InputMethodService() {
         val symbolArea = view.findViewById<View>(R.id.xenos_symbol_area)
         val clipboardPanel = view.findViewById<ScrollView>(R.id.xenos_clipboard_panel)
         val clipboardList = view.findViewById<LinearLayout>(R.id.xenos_clipboard_list)
-        val settingsOverlay = view.findViewById<View>(R.id.xenos_settings_overlay)
+        val settingsOverlay = view.findViewById<View>(R.id.cedal_settings_overlay)
+        val wordCountText = view.findViewById<TextView>(R.id.cedal_word_count)
 
         val btnClipboard = view.findViewById<ImageButton>(R.id.btn_clipboard)
         val btnSettings = view.findViewById<ImageButton>(R.id.btn_settings)
 
-        val switchTiles = view.findViewById<Switch>(R.id.switch_color_mode)
-        val btnChangeMode = view.findViewById<Button>(R.id.btn_change_mode)
-
-        val tilesOn = themePrefs.getBoolean("cedal_tiles_on", false)
-        switchTiles.isChecked = tilesOn
-        applyTilesMode(view, tilesOn)
-
-        switchTiles.setOnCheckedChangeListener { _, isChecked ->
-            themePrefs.edit().putBoolean("cedal_tiles_on", isChecked).apply()
-            applyTilesMode(view, isChecked)
-        }
-
-        btnChangeMode.setOnClickListener {
-            switchTiles.isChecked = !switchTiles.isChecked
-        }
-
+        // Real bug fixed 2026-08-11: this used to only ever open the clipboard panel - tapping
+        // Clipboard again while it was already open did nothing, no way back except tapping an
+        // actual clip. Now a second tap while open closes it back to the normal keyboard.
         btnClipboard.setOnClickListener {
-            settingsOverlay.visibility = View.GONE
-            keyArea.visibility = View.GONE
-            symbolArea.visibility = View.GONE
-            clipboardPanel.visibility = View.VISIBLE
-            populateClipboardList(clipboardList, view)
+            if (clipboardPanel.visibility == View.VISIBLE) {
+                clipboardPanel.visibility = View.GONE
+                keyArea.visibility = View.VISIBLE
+            } else {
+                settingsOverlay.visibility = View.GONE
+                keyArea.visibility = View.GONE
+                symbolArea.visibility = View.GONE
+                clipboardPanel.visibility = View.VISIBLE
+                populateClipboardList(clipboardList, view)
+            }
         }
 
+        // Cedal's own tools (deliberately not Xenos's neon Tiles toggle - real productivity
+        // tools instead, fitting "professional"): case conversion, whitespace cleanup, and a
+        // live word/character count of the field currently being typed into.
         btnSettings.setOnClickListener {
             clipboardPanel.visibility = View.GONE
             symbolArea.visibility = View.GONE
             keyArea.visibility = View.VISIBLE
-            settingsOverlay.visibility =
-                if (settingsOverlay.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            val opening = settingsOverlay.visibility != View.VISIBLE
+            settingsOverlay.visibility = if (opening) View.VISIBLE else View.GONE
+            if (opening) {
+                val fullText = currentInputConnection?.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)?.text?.toString().orEmpty()
+                val (words, chars) = KeyboardTextTools.wordAndCharCount(fullText)
+                wordCountText.text = "$words words, $chars characters"
+            }
+        }
+
+        view.findViewById<Button>(R.id.tool_uppercase).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this) { it.uppercase() }
+        }
+        view.findViewById<Button>(R.id.tool_lowercase).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this) { it.lowercase() }
+        }
+        view.findViewById<Button>(R.id.tool_titlecase).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::titleCase)
+        }
+        view.findViewById<Button>(R.id.tool_trim).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::trimWhitespace)
         }
 
         val themeButton = view.findViewById<Button>(R.id.key_theme)
         themeButton.text = "\u003F123"
         themeButton.setOnClickListener {
+            settingsOverlay.visibility = View.GONE
             if (keyArea.visibility == View.VISIBLE) {
                 keyArea.visibility = View.GONE
                 clipboardPanel.visibility = View.GONE
@@ -114,6 +125,7 @@ class CedalKeyboardService : InputMethodService() {
 
         val symToLetters = view.findViewById<Button>(R.id.sym_to_letters)
         symToLetters.setOnClickListener {
+            settingsOverlay.visibility = View.GONE
             symbolArea.visibility = View.GONE
             keyArea.visibility = View.VISIBLE
             themeButton.text = "\u003F123"
@@ -263,10 +275,21 @@ class CedalKeyboardService : InputMethodService() {
             currentInputConnection?.commitText("\n", 1)
         }
 
+        // Shift: tap = one-shot capital (auto-reverts to lowercase after the next letter, via
+        // bindKey()'s own "if (capsOn && !isCapsLock)" check above); tap again while locked =
+        // fully off. Long-press = real caps lock (stays capital until tapped off).
+        //
+        // Real bug fixed 2026-08-11: this used to set isCapsLock = capsOn on every single tap,
+        // which made bindKey()'s one-shot-revert condition unreachable - so a single tap behaved
+        // exactly like caps lock (capitalized everything) instead of just the next letter.
         val shiftBtn = view.findViewById<Button>(R.id.key_shift)
         shiftBtn.setOnClickListener {
-            capsOn = !capsOn
-            isCapsLock = capsOn
+            if (isCapsLock) {
+                capsOn = false
+                isCapsLock = false
+            } else {
+                capsOn = !capsOn
+            }
             updateShiftVisual(view)
             rebindAllLetterKeys(view)
         }
@@ -306,38 +329,6 @@ class CedalKeyboardService : InputMethodService() {
         ic.deleteSurroundingText(toDelete, 0)
     }
 
-    private fun applyTilesMode(root: View, tilesOn: Boolean) {
-        val ids = listOf(
-            // numbers
-            R.id.key_1, R.id.key_2, R.id.key_3, R.id.key_4, R.id.key_5,
-            R.id.key_6, R.id.key_7, R.id.key_8, R.id.key_9, R.id.key_0,
-            // letters
-            R.id.key_q, R.id.key_w, R.id.key_e, R.id.key_r, R.id.key_t,
-            R.id.key_y, R.id.key_u, R.id.key_i, R.id.key_o, R.id.key_p,
-            R.id.key_a, R.id.key_s, R.id.key_d, R.id.key_f, R.id.key_g,
-            R.id.key_h, R.id.key_j, R.id.key_k, R.id.key_l,
-            R.id.key_z, R.id.key_x, R.id.key_c, R.id.key_v,
-            R.id.key_b, R.id.key_n, R.id.key_m,
-            // special
-            R.id.key_shift, R.id.key_theme, R.id.key_space,
-            R.id.key_delete, R.id.key_enter,
-            R.id.btn_clipboard, R.id.btn_settings,
-            R.id.btn_change_mode,
-            // symbols
-            R.id.sym_exclam, R.id.sym_at, R.id.sym_hash, R.id.sym_dollar, R.id.sym_percent,
-            R.id.sym_amp, R.id.sym_star, R.id.sym_lparen, R.id.sym_rparen, R.id.sym_underscore,
-            R.id.sym_plus, R.id.sym_minus, R.id.sym_equal, R.id.sym_slash, R.id.sym_backslash,
-            R.id.sym_pipe, R.id.sym_tilde, R.id.sym_lt, R.id.sym_gt, R.id.sym_pm,
-            R.id.sym_comma, R.id.sym_dot, R.id.sym_question, R.id.sym_colon, R.id.sym_semicolon,
-            R.id.sym_quote, R.id.sym_dquote, R.id.sym_ellipsis, R.id.sym_bullet, R.id.sym_hyphen,
-            R.id.sym_to_letters, R.id.sym_space, R.id.sym_delete, R.id.sym_enter
-        )
-        val res = if (tilesOn) R.drawable.xenos_key_neon_cyan else R.drawable.xenos_key_black
-        for (id in ids) {
-            root.findViewById<View>(id)?.setBackgroundResource(res)
-        }
-    }
-
     private fun populateClipboardList(list: LinearLayout, root: View) {
         list.removeAllViews()
         val inflater: LayoutInflater = layoutInflater
@@ -348,7 +339,17 @@ class CedalKeyboardService : InputMethodService() {
             val txt1 = itemView.findViewById<TextView>(android.R.id.text1)
             val txt2 = itemView.findViewById<TextView>(android.R.id.text2)
 
-            txt1.text = entry.text
+            // simple_list_item_2's default text color assumes a light background - on this
+            // dark keyboard panel it rendered dark-on-dark, effectively invisible. Also cap
+            // the preview to one short line instead of dumping the full copied text into a
+            // cramped keyboard row - a long clip (a password, a paragraph) doesn't need to be
+            // fully exposed just sitting in the list; tapping it still pastes the real full
+            // text below, only the on-screen preview is shortened.
+            txt1.setTextColor(0xFFE4E7EC.toInt())
+            txt1.maxLines = 1
+            txt1.ellipsize = android.text.TextUtils.TruncateAt.END
+            txt1.text = entry.text.replace('\n', ' ').trim().take(60)
+            txt2.setTextColor(0xFF8A8F98.toInt())
             txt2.text = DateFormat.format(timeFormat, entry.time)
 
             itemView.setOnClickListener {

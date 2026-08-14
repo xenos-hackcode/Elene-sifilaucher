@@ -84,6 +84,10 @@ object MotionTheftDetector : SensorEventListener {
 
     private fun onMotionSpikeDetected(context: Context) {
         val lockPrefs = context.getSharedPreferences("lock_prefs", Context.MODE_PRIVATE)
+        // Anti-theft mode toggle: when OFF, Elene doesn't proactively alert on sudden motion
+        // ("are you running?" / the "Are you OK?" notification / the confirm-or-arm countdown).
+        // Manual lockdown, failed-fingerprint auto-arm, location tracking, and wipe still work.
+        if (!isAntiTheftModeEnabled(lockPrefs)) return
         if (isSequenceModeActive(lockPrefs)) return
         if (isMotionAlertPending(lockPrefs)) return
         if (isMotionAlertOnCooldown(lockPrefs)) return
@@ -92,7 +96,7 @@ object MotionTheftDetector : SensorEventListener {
         SystemEventLog.record(context, "SequenceMode", "Motion spike detected - confirm-or-arm countdown started")
 
         ScifiAccessibilityService.instance?.speakElene(
-            "Elene here. I noticed sudden movement - are you running, or is everything OK? " +
+            "Xenos here. I noticed sudden movement - are you running, or is everything OK? " +
                 "Confirm your fingerprint within 10 minutes, or I'll assume something's wrong."
         )
         showConfirmNotification(context)
@@ -153,6 +157,19 @@ object MotionTheftDetector : SensorEventListener {
         WorkManager.getInstance(context).cancelUniqueWork(MOTION_CONFIRM_TIMEOUT_WORK_NAME)
         SystemEventLog.record(context, "SequenceMode", "Motion alert confirmed by owner - false alarm")
         androidx.core.app.NotificationManagerCompat.from(context).cancel(MOTION_NOTIFICATION_ID)
+    }
+
+    /** Cancels any pending motion alert without arming - used when the user turns OFF the
+     * Anti-theft mode toggle. Unlike [onConfirmed], this isn't a "false alarm" confirmation -
+     * it's an explicit silencing of Elene's proactive motion alerts so she stops asking
+     * "are you OK?" and won't push a state change (Standing by -> ACTIVE) the user disabled. */
+    fun cancelPendingMotionAlert(context: Context) {
+        val lockPrefs = context.getSharedPreferences("lock_prefs", Context.MODE_PRIVATE)
+        if (!isMotionAlertPending(lockPrefs)) return
+        resolveMotionAlert(lockPrefs)
+        WorkManager.getInstance(context).cancelUniqueWork(MOTION_CONFIRM_TIMEOUT_WORK_NAME)
+        androidx.core.app.NotificationManagerCompat.from(context).cancel(MOTION_NOTIFICATION_ID)
+        SystemEventLog.record(context, "SequenceMode", "Anti-theft mode turned off - pending motion alert cancelled")
     }
 
     private const val CHANNEL_ID = "motion_theft_alert"

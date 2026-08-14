@@ -8,22 +8,30 @@ data class WifiConnectionStatus(
     val ssid: String?,
     val rssiDbm: Int?,
     val linkSpeedMbps: Int?,
-    val ipAddress: String?
+    val ipAddress: String?,
+    val gatewayIp: String?
 )
 
 @Suppress("DEPRECATION")
 fun currentWifiStatus(context: Context): WifiConnectionStatus {
     val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        ?: return WifiConnectionStatus(false, null, null, null, null)
+        ?: return WifiConnectionStatus(false, null, null, null, null, null)
     val info = runCatching { wifiManager.connectionInfo }.getOrNull()
     val ssid = info?.ssid?.trim('"')?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
     val ip = info?.ipAddress?.takeIf { it != 0 }?.let { intToIpString(it) }
+    // Real bug fixed 2026-08-14: the "Router" row in Security > Network Protection used to show
+    // a hardcoded "Sky" literal regardless of which network was actually connected - found live
+    // when the user was on a friend's "EE" network and it still said "Sky". This reads the real
+    // DHCP gateway IP for whatever network is actually connected right now instead.
+    val gateway = runCatching { wifiManager.dhcpInfo?.gateway }.getOrNull()
+        ?.takeIf { it != 0 }?.let { intToIpString(it) }
     return WifiConnectionStatus(
         connected = ssid != null,
         ssid = ssid,
         rssiDbm = info?.rssi,
         linkSpeedMbps = info?.linkSpeed,
-        ipAddress = ip
+        ipAddress = ip,
+        gatewayIp = gateway
     )
 }
 

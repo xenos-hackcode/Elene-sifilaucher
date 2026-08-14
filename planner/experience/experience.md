@@ -1,5 +1,13 @@
 # Experience - what real on-device testing actually showed
 
+- Multi Control (2026-08-10): added the `multi_control` voice verb to
+  `backend/elene/main.py`, deployed to Cloud Run as `elene-backend-00046-5hp`, smoke-tested with
+  `curl` against `/pink` (`{"status":"okay"}`) before calling it live. On-device: user tested both
+  a 2-app and a 3-app freeform launch live; real logcat pull afterward (`AndroidRuntime:E` +
+  `WindowManager:I` filtered) showed genuine `com.android.wm.shell.freeform.FreeformContainerView`
+  windows created for each run and zero crash lines - confirms this is real OS freeform windowing,
+  not a preview, and confirms the `ActivityOptions.setLaunchWindowingMode` approach actually works
+  on this device from a Device Owner/launcher app.
 - FRILL-based Voice ID: same-speaker cosine similarity ranged ~0.60-0.75 across retries even
   after silence-trimming + per-frame normalization fixes - inconsistent enough that a real
   same-voice retry got wrongly rejected at a 0.75 threshold. Root cause: FRILL is a
@@ -786,11 +794,362 @@
   on the real repo (`403: Resource not accessible by personal access token`, confirmed via a
   direct API test, not assumed) - the user generated a fresh classic PAT with `repo` scope, which
   was verified working via a real label-creation call before being wired in.
-  **Not yet confirmed live end-to-end**: no real proposal has gone through the full chain yet
-  (approve on phone -> issue created -> picked up by the hourly routine -> implemented, tested,
-  deployed, verified, issue closed) - the user's GCP billing needs resolving first before any of
-  this can be exercised for real, same blocker as the other pending live-test items from this
-  session.
+  **Update (same day, after billing resolved)**: first real end-to-end attempt found and fixed a
+  real bug in how this was deployed, not in the pipeline's own design. The user asked Elene to
+  propose adding an `/elene/ping` endpoint (STT actually misheard this as "a linking" - a real,
+  separate speech-recognition accuracy gap worth knowing about for future voice-driven proposals,
+  not something fixed this pass), approved it via fingerprint - but no GitHub issue appeared.
+  Root-caused via real Cloud Run logs, not guessed: `submit_update_request` was failing with a
+  real `403 Forbidden` from GitHub, even though a direct curl test with the exact same
+  `GITHUB_PAT` value succeeded (201) - ruling out the token itself. The actual cause: an earlier,
+  wrong assumption that Cloud Run always reads a `:latest`-referenced secret automatically had no
+  basis - secret values are only loaded into a container's environment at *startup*, and the
+  already-warm instance serving requests had started before the PAT was updated, so it was still
+  holding the old, broken token in memory the whole time despite the secret itself being correct.
+  Fixed with a forced redeploy (`gcloud run services update --update-secrets`, new revision
+  `elene-backend-00038-wt4`) to force a fresh container pickup - confirmed via a direct
+  `/elene/submit_update_request` test call immediately after, which correctly created a real
+  GitHub issue. **Real, generalizable lesson for this whole project**: updating a Secret Manager
+  secret's value is not enough by itself if a Cloud Run service is already warm/serving traffic -
+  a fresh deploy (or at minimum confirming a cold start actually happened) is needed before
+  trusting a secret rotation actually took effect, contradicting the earlier assumption stated
+  when this session first bound `GITHUB_PAT` to the service. **Still not fully confirmed**: the
+  user's own real proposal (once redone, ideally with a request STT can transcribe cleanly) still
+  needs to flow all the way through - issue created -> picked up by the hourly routine ->
+  implemented/tested/deployed/verified -> issue commented and closed. That last, most important
+  leg is still unconfirmed.
+
+- (2026-08-07) Anti-theft mode toggle built, in response to the user pointing out the motion-based
+  "are you OK?" check-in (built 2026-07-31) had no way to turn it off - it always fires once
+  enabled at the OS-sensor level, with no per-user opt-out. Added `KEY_ANTI_THEFT_MODE_ENABLED` to
+  `SequenceMode.kt` (default ON, so existing behavior doesn't silently change for anyone who
+  already has it on), a "Anti-theft mode" `PanelToggleRow` + info dialog in Security > SEQUENCE
+  MODE (`SecurityScreen.kt`), and wired it through `MainActivity.kt`. Turning it OFF does two
+  things, not just one: (1) `MotionTheftDetector.onMotionSpikeDetected()` early-returns so no new
+  alert starts, and (2) a new `cancelPendingMotionAlert()` immediately resolves and clears any
+  alert *already in flight* (cancels the WorkManager countdown, clears the notification) instead
+  of leaving the user to wait out up to 10 more minutes of "are you OK?" - the user's own explicit
+  ask ("that toggle should also have the power to stop elene from asking if i am ok", not just
+  gate future alerts). `MotionConfirmTimeoutWorker` also re-checks the toggle at fire time, so
+  toggling off mid-countdown resolves the alert without arming Sequence Mode. Manual lockdown,
+  N-failed-fingerprint auto-arm, location tracking, and full wipe are untouched - confirmed by
+  inspection, none of those paths read this new pref. Found and fixed an unrelated cosmetic
+  artifact while touching these files: six lines across `SecurityScreen.kt`, `MainActivity.kt`,
+  and `MotionTheftDetector.kt` had lost their leading indentation from a previous session's edit
+  (compiled fine either way, just messy diffs) - re-indented, no logic change. Builds clean
+  (`compileDebugKotlin` and `assembleDebug`), installed on the real device with no crash
+  (confirmed via logcat - clean launch, `ScifiAccessibilityService` reconnected, bubble visible).
+  **Confirmed working 2026-08-07** - user tested live on the real device and confirmed the toggle
+  works as intended.
+
+- (2026-08-07) Phoenix Protocol, small version, built - the user picked this off three options
+  offered after the anti-theft toggle was confirmed (the other two: a safe check-and-notify-only
+  remote auto-update, or retrying the still-unconfirmed Updates-screen self-update end-to-end
+  test). Scope was kept deliberately narrow, matching what `planner/not_started.md` had already
+  judged "worth building" as distinct from the full deferred Phoenix Protocol: a one-way backup of
+  just the intruder-capture photos and location history, uploaded right before Sequence Mode's
+  existing ~30-day auto-wipe deletes them for good, gated behind the existing Full-device wipe
+  toggle - not a restore flow, not the whole app's data, not any of the unreliable detection
+  triggers the full version's own writeup had already flagged as unbuildable on stock Android.
+  Real infra work, not just app code: created a new private GCS bucket
+  (`gs://cedal-fd4a2-elene-evacuation`, uniform bucket-level access + public access prevention),
+  granted Cloud Run's default compute service account `roles/storage.objectAdmin` scoped to just
+  that bucket (not project-wide), added the `google-cloud-storage` dependency, and deployed a new
+  `/elene/evacuate_backup` endpoint (revision `elene-backend-00039-mzv`). Verified this for real,
+  not just trusted `{"ok": true}` from the API: sent a smoke-test request with a real base64 JPEG,
+  then independently confirmed via `gcloud storage ls -r` that both a `manifest.json` and the
+  actual `42.jpg` object existed in the bucket afterward - the backend genuinely persists data,
+  not just returning a success shape. Android side: `EleneApiClient.evacuateBackup()` (given its
+  own longer OkHttp timeout, since a batch of intruder photos is a bigger payload than the
+  single-image calls elsewhere in that client) and a new `PhoenixEvacuation.kt` that reads
+  `IntruderCaptureLog`/`LocationHistory` entries and base64-encodes each photo file straight off
+  disk. `SequenceMode.performSequenceWipe()` is now `suspend` and runs the upload first - wrapped
+  in `runCatching` so a failed upload can never block the real wipe, which stays the actual safety
+  mechanism regardless. Also added a "Test evacuation backup now" row in Security > SEQUENCE MODE
+  (same self-contained pattern as the existing "Test voice match" button) specifically so this can
+  be verified without ever triggering a real, irreversible 30-day wipe just to test it. Being
+  honest about the word "encrypted" from the original ask: this relies on HTTPS in transit plus
+  Cloud Storage's default encryption at rest - the same trust model already used everywhere else
+  in this backend (no endpoint here does client-side/end-to-end encryption) - not a new
+  zero-knowledge scheme invented just for this feature; said so directly in the button's own info
+  dialog rather than overclaiming. Builds clean, installed on the real device with no crash
+  (confirmed via logcat, clean launch). **Not yet confirmed live**: actually tapping "Test
+  evacuation backup now" on the device and watching a real intruder photo/location entry go
+  through end-to-end into the UI's own success message - the backend half is independently
+  proven, the on-device half (file read -> base64 -> real network round trip -> UI update) still
+  needs the user's own hands.
+
+- (2026-08-07) Real bug found via the user's own live test of "Test evacuation backup now" - it
+  failed. Root-caused from real logcat, not guessed: a `java.net.SocketTimeoutException` on the
+  OkHttp stream while waiting for response headers. The fix earlier the same day only raised
+  `callTimeout` (90s) on the evacuation upload's dedicated OkHttp client - `connectTimeout`/
+  `readTimeout`/`writeTimeout` were still inherited unchanged from the base client's 10s default,
+  and the per-stream `readTimeout` is what actually tripped first. Confirmed why 10s wasn't enough
+  even with nothing but location history to upload (46KB of JSON, no real intruder photos existed
+  on this device - `intruders/` had already been cleared by an earlier wipe test, leaving only
+  stale dangling paths in `intruder_capture_prefs.xml`, which `PhoenixEvacuation` already handles
+  by nulling out the photo and continuing): `elene-backend` runs at `minScale=0` and has an
+  already-documented ~9.5s cold start elsewhere in this same project (see the 2026-07-31 GCP
+  billing entry) - that alone eats nearly the entire old 10s budget before any real request
+  processing even starts. Fixed by explicitly setting `connectTimeout`(30s)/`readTimeout`(90s)/
+  `writeTimeout`(90s) on the evacuation client, not just `callTimeout`(now 120s). Rebuilt, reinstalled,
+  no crash (confirmed via logcat). **Confirmed working 2026-08-08** - user retried "Test
+  evacuation backup now" and it succeeded.
+
+- (2026-08-08) "Hey Elene" personalized wake-word matching built, in direct response to the user
+  reporting the default STT-text-match wake check missed for their accent. Real design point: the
+  default path (`ScifiAccessibilityService.containsWakeWord`) only ever checks Android's
+  SpeechRecognizer transcription for the phrase as a substring - if the transcription itself is
+  wrong for a given accent, no amount of correctly saying the phrase would ever match. Rather than
+  widening the text-match list (a real option, but only a patch on the same underlying dependency),
+  built a genuinely STT-independent path: `HeyEleneWakeWord.kt` records 5 reference takes, extracts
+  the same Kaldi-style fbank features already used for Voice ID (`SpeakerFbank`'s vendored
+  kaldi-native-fbank JNI, reused as-is), and matches a live ~2.5s raw capture against those
+  templates via Dynamic Time Warping - a classic, deterministic template-matching technique
+  (no model training needed, unlike the openWakeWord path already scoped as blocked in
+  `planner/not_started.md`). The live wake-check cycle bypasses SpeechRecognizer entirely once
+  enrolled, falling back automatically to the old STT path if nothing's been recorded. Threshold
+  is calibrated from the recorded takes' own pairwise DTW distances with a safety margin, not a
+  fixed guess - explicitly disclosed in the feature's own info dialog as something that might still
+  need a re-record if it's too tight or loose in practice, same honesty pattern as every other
+  perceptual threshold in this app. `VoiceCapture.recordVoiceSample` gained a `requestFocus`
+  param (default true, so no behavior change for existing Voice ID callers) so the new background
+  wake-check cycle can skip grabbing transient audio focus every few seconds - reusing exactly the
+  reasoning already documented for why the STT wake-check skips AudioFocus too. Real UX bug caught
+  by the user before any device testing even happened: the first version only showed the "say it
+  now (2/5)" prompt as a tiny subtitle on a Settings row, easy to miss while also trying to speak -
+  replaced with an actual modal dialog (large "Hey Elene" title, live "Take X of 5" counter, a
+  Cancel button) that stays up for the whole sequence. Builds clean, installed with no crash
+  (confirmed via logcat). **Not yet confirmed live**: recording real takes and testing whether
+  "Hey Elene" now actually triggers reliably for this accent over repeated real use, and whether
+  the auto-calibrated threshold holds up or needs a re-record.
+
+- (2026-08-08) User asked directly whether the Updates-screen self-update pipeline (built
+  2026-08-02) actually works - checked with real evidence instead of answering from memory (the
+  last logged status was "blocked on GCP billing," which was known to be stale). Pulled the full
+  comment history of the pipeline's own test issue (GitHub issue #3, "add simple pink Endpoint
+  returning status okay") via `gh issue view --json comments` - real, direct evidence, not assumed.
+  Found something more specific than expected: the approve → GitHub-issue → scheduled-agent →
+  implement → self-test chain is genuinely real and working - every one of 19+ consecutive hourly
+  runs across ~21 hours correctly read the request, wrote a working endpoint, started a real local
+  uvicorn server, and curl-verified it. Every single run then hit the identical wall: the scheduled
+  agent's own execution sandbox has never had the `gcloud` CLI installed, so it has no way to
+  authenticate or deploy - and to its credit, every run honestly reported this and left the issue
+  open rather than faking a close. One run (#17) went as far as committing its verified change to
+  `master` (`bf09c1d`) without deploying it. A later run explicitly flagged the loop itself:
+  "retrying this hourly isn't going to produce a different outcome... this needs [gcloud access, or
+  a different environment, or a human to deploy manually]" - a real, correct piece of self-
+  diagnosis from the automated pipeline, not something anyone had to point out to it.
+  With the user's explicit go-ahead, manually finished this one case using this session's real
+  `gcloud` access: applying `bf09c1d`'s diff directly would have deployed backend code from before
+  the same day's Phoenix Protocol work, silently rolling back the already-live
+  `/elene/evacuate_backup` endpoint - caught by comparing `bf09c1d`'s diff context against the
+  current `main.py` before deploying, not discovered as a live incident. Applied just the `/pink`
+  endpoint onto the current working tree instead, deployed (revision `elene-backend-00040-dcg`),
+  verified live via a real HTTP request (`{"status":"okay"}`, HTTP 200) and re-verified
+  `/elene/evacuate_backup` still worked afterward (no regression) - then commented on and closed
+  issue #3 with that evidence, matching exactly what the pipeline's own comments said still needed
+  to happen before a real close. **Real open question, not resolved**: whether to give the
+  scheduled routine actual `gcloud`/GCP credentials so future approved changes deploy unattended -
+  a genuinely consequential decision (handing deploy access to an unattended scheduled job) that
+  wasn't made here, just surfaced. See `planner/not_started.md`.
+
+- (2026-08-08) User answered that open question directly: "I want it to go live without any human
+  approval." Confirmed this meant automating the deploy step specifically (the fingerprint approval
+  that creates the GitHub issue in the first place was never in question, not touched). Checked the
+  routine's actual config via `RemoteTrigger action=get` before doing anything - real finding: its
+  prompt was already written to grant full autonomy ("Approval is the ONLY human checkpoint...
+  authorized to implement, test, and deploy... with no further human sign-off"), and its own schema
+  has no secrets/env-var mechanism, only a stored prompt and MCP connectors (none connected). Flagged
+  the real tradeoff to the user before proceeding - the only viable mechanism is embedding a live
+  GCP service-account key directly in the routine's stored prompt, which then persists there
+  indefinitely (visible in the routines UI, resent every run) - user explicitly chose to proceed
+  with a tightly-scoped key rather than skip this or hunt for an MCP alternative.
+  Created `elene-backend-deployer@cedal-fd4a2.iam.gserviceaccount.com` and tried to scope
+  `roles/run.developer` down to only the `elene-backend` service via an IAM Condition - this became
+  a real, extended debugging chain, not a quick grant: three different resource-name formats were
+  tried (`projects/cedal-fd4a2/locations/us-central1/services/elene-backend`, matching Cloud Run's
+  documented v2 condition format; `namespaces/cedal-fd4a2/services/elene-backend`, matching the
+  literal resource string shown in the actual `PERMISSION_DENIED` error; and
+  `namespaces/717899371194/services/elene-backend`, the project-number variant found via
+  `metadata.selfLink`), each retested, one retested again after an 8+ minute wait specifically to
+  rule out IAM propagation delay as the cause. All three failed identically. Rather than keep
+  guessing a fourth format, got an authoritative answer from `gcloud policy-troubleshoot iam` (had
+  to `gcloud services enable policytroubleshooter.googleapis.com` first, itself needing two tries -
+  the first used a resource-name format the troubleshooter itself rejected as invalid, a different
+  format requirement than the IAM condition syntax uses): the condition evaluates as
+  `UNKNOWN_CONDITIONAL` for the specific `run.services.get` permission check `gcloud run deploy`
+  makes early on - genuinely undetermined, not false - a real limitation of resource-scoped IAM
+  conditions for this exact permission path in this GCP project, not a syntax mistake worth a fourth
+  guess. Presented this finding plus the concrete tradeoff to the user (drop the per-service
+  condition and accept a broader unconditioned grant covering all ~24 Cloud Run services in the
+  project, vs. keep debugging with uncertain payoff, vs. abandon deploy automation) rather than
+  silently picking one - **user explicitly chose the broader unconditioned grant**. Also found and
+  fixed along the way: the intended `roles/iam.serviceAccountUser` target
+  (`717899371194@cloudbuild.gserviceaccount.com`, the legacy Cloud Build service account) doesn't
+  exist in this project at all (`NOT_FOUND`) - this project's Cloud Build actually runs as the
+  compute default SA instead (a real, project-specific fact, not assumed from generic docs), so the
+  binding was corrected to target `717899371194-compute@developer.gserviceaccount.com` instead.
+  **Paused here at the user's explicit "wait stop"**, before the final steps (retest with the
+  now-unconditioned grant, generate the routine's real key, wire it into the routine's stored
+  prompt, run the routine once for real end-to-end confirmation) - nothing about the live
+  `elene-backend` service itself was touched or is at risk; see `planner/in_progress/in_progress.md`
+  for the exact resume point and full current IAM state.
+
+- (2026-08-08, later same day) User confirmed the machine reboot finished and said to continue.
+  Verified the environment survived cleanly first (own `gcloud` auth still active, the paused
+  session's test key/config still present in the temp scratchpad) before resuming, rather than
+  assuming. Retesting the deploy with the now-unconditioned `run.developer` grant turned into a
+  second real debugging chain, not a quick confirmation - `gcloud run deploy --source` needs more
+  than just Cloud Run access, and each gap only showed up as a real error once the previous one was
+  fixed: `artifactregistry.repositories.get` denied on the `cloud-run-source-deploy` repo (fixed
+  with `roles/artifactregistry.writer` scoped to just that repo) → `storage.buckets.get` denied on
+  `run-sources-cedal-fd4a2-us-central1` (a different, newer-style source-upload bucket than the
+  `cedal-fd4a2_cloudbuild` one originally scoped - `gcloud run deploy --source` apparently moved to
+  this bucket pattern; `roles/storage.objectAdmin` scoped to it still wasn't enough) → upgraded to
+  `roles/storage.admin` on that one bucket (still failed - turns out `storage.objectAdmin` doesn't
+  include `storage.buckets.get` at all) → then `storage.buckets.list` denied at the *project* level,
+  which can't be scoped to a single bucket in GCS's IAM model at all (list is inherently project-
+  wide). Rather than silently keep escalating (five real permission gaps deep at that point, well
+  past the original "scope it as tightly as possible" plan), stopped and put the actual tradeoff to
+  the user directly: grant project-wide `roles/storage.admin` (full control over every bucket in the
+  project, including the Phoenix Protocol evacuation bucket) vs. keep debugging narrower roles vs.
+  abandon. **User explicitly chose the project-wide grant.** With that granted, the deploy finally
+  succeeded for real - revision `elene-backend-00041-shz`, independently verified live via `curl`
+  against `/pink` (not just trusting the deploy command's exit code) and re-verified
+  `/elene/evacuate_backup` still worked afterward (no regression from any of the IAM changes).
+  Revoked the test key immediately after (it had only ever been used inside an isolated `gcloud`
+  config directory, never the main session's own auth), deleted all local test artifacts, then
+  generated a dedicated fresh key for the routine's actual long-term use - the debugging key and the
+  routine's real key were never the same key. Wired the new key into the routine's stored prompt via
+  `RemoteTrigger action=update`: fetched the exact current prompt text first (not reconstructed from
+  memory), used a small Python script to do an exact-string-match replace of the old "check for
+  gcloud, stop if missing" step with a new "authenticate with the embedded key, then proceed" step -
+  the script asserted the old text matched verbatim before writing anything, specifically to avoid
+  silently corrupting the prompt if the remembered text had drifted from what was actually stored.
+  Confirmed the update landed by reading the routine back afterward. Ran the routine once manually
+  (`RemoteTrigger action=run`) as a sanity check - but `gh issue list` showed zero open
+  `approved-backend-update` issues at the time, so this only proves the updated prompt doesn't
+  error, not that the deploy path fires correctly from inside the routine's own cloud sandbox.
+  Deliberately did not fabricate a test issue to force a fuller test - the routine's whole trust
+  model rests on that label only ever being applied by a real on-device fingerprint approval, and
+  faking one would undermine the exact thing being protected. Real confirmation of the full
+  unattended loop is still pending the user's next genuine approved proposal. Cleaned up every local
+  scratchpad artifact (key files, gcloud test config, the prompt-diff script) once the update was
+  confirmed landed - nothing about this work should require hunting through temp files later.
+
+- (2026-08-09) The gcloud-deploy fix from a few hours earlier turned out to be built on an
+  unverified assumption, and a separate line of conversation is what surfaced it. The user asked
+  about expanding self-updates to Android/Kotlin app changes too - including a real one-off
+  diagnostic that proved the cloud routine's sandbox can't build Android apps at all (hard 403 at
+  the sandbox's egress gateway on `dl.google.com`/`maven.google.com`, the host every Android Gradle
+  build needs just to resolve the Android Gradle Plugin itself, before ever touching this app's own
+  native code or ONNX models - confirmed conclusively, not a maybe). The user then proposed a smart
+  workaround (a custom Cloud Build container with everything pre-installed, since Cloud Build runs
+  on Google's own infrastructure with a different network path than the sandbox) - and reasoning
+  through *that* idea is what surfaced the real gap: any Cloud-Build-based fix still needs the
+  sandbox to invoke `gcloud` (or an equivalent API call) from inside itself, and the historical
+  evidence (19+ runs all reporting `gcloud: command not found`, before today's fix) meant that was
+  never actually confirmed to work even for the backend pipeline - today's fix only added an
+  authentication step, on the assumption a `gcloud` binary would already be there to run it, and
+  that assumption was never tested end-to-end.
+  Ran a second isolated diagnostic to check for real: tried all three official Google Cloud SDK
+  install methods (apt repo via `packages.cloud.google.com`, the `sdk.cloud.google.com` installer
+  script, a direct `dl.google.com` tarball) - all three hit a real 403 at the sandbox's own egress
+  gateway, confirmed via the proxy's own status log (`connect_rejected` / policy denial), running as
+  root so it wasn't a permissions issue. **Conclusion: `gcloud` cannot be installed in this sandbox
+  by any method - the same class of hard network-policy block already found for Android tooling,
+  not specific to Android at all.** This meant the service-account key embedded in the production
+  routine's prompt a few hours earlier could never actually have been used for its intended purpose,
+  regardless of how correctly it was IAM-scoped - real, if scoped, credential exposure with zero
+  functional benefit.
+  Separately, real credit due: that same diagnostic session, on its own initiative, refused to write
+  the embedded private key to disk or use it for authentication, flagging that a live credential
+  embedded in an unattended automated prompt - however thoroughly justified in the surrounding text
+  - is indistinguishable in shape from a credential-exfiltration attempt, and that it had no way to
+  verify who actually authored that justification. It was moot here (no `gcloud` binary existed to
+  authenticate with anyway), but it's a genuine, independently-arrived-at safety judgment worth
+  recording, not a false alarm to wave off.
+  Acted immediately, same session, mid-conversation (the user asked to pause and restart their
+  machine partway through this) rather than letting it sit: revoked the exposed key
+  (`gcloud iam service-accounts keys delete`), fetched the routine's exact current prompt, and used
+  the same verified exact-string-match-replace approach as the original fix to strip all key
+  material out and restore step (e) to honestly checking for `gcloud` and stopping if absent - now
+  explicitly documented as a confirmed, permanent environment limitation rather than a soft
+  "currently missing" note, so a future session doesn't waste time re-investigating a question that's
+  already conclusively answered. Confirmed via re-reading the routine that no key material remains.
+  The service account and its IAM grants were left in place (dormant, unused, no ongoing cost or
+  risk on their own) rather than torn down, since they'd become useful again if the Cloud-Build-based
+  approach the user proposed is ever actually built and proven - that idea itself is real and
+  worth pursuing, just not yet attempted; see `planner/not_started.md`.
+
+- (2026-08-09) Followed through on the user's Cloud Build idea with real evidence at each step,
+  not assumption. First: a reachability diagnostic (same safe pattern as prior ones - read-only
+  curl checks, no credentials) confirmed `cloudbuild.googleapis.com`, `oauth2.googleapis.com`, and
+  the rest of Google's API surface are reachable from the routine's restricted sandbox, while
+  `dl.google.com` (the known-blocked baseline) failed instantly with the same gateway-rejection
+  signature already seen twice before - confirming the sandbox blocks *software distribution*
+  specifically, not Google's APIs generally. Genuinely good, unexpected news given how the day's
+  earlier `gcloud` investigation had gone.
+  Tried to validate the next layer - does a real JWT-auth-and-trigger round trip actually work, not
+  just "is the host reachable" - via another one-off diagnostic routine, embedding a fresh
+  short-lived key with an explicit, detailed justification for why it was legitimate this specific
+  time (short-lived, narrowly-scoped, already-approved permissions, trivial harmless test action).
+  **Claude Code's own auto-mode safety classifier blocked the attempt anyway.** Did not try to work
+  around it - the block itself was reasonable given the exact same pattern (a live credential
+  embedded in an unattended automated prompt) had already caused a real problem earlier the same
+  day. Revoked the never-used key immediately, explained the block to the user plainly, and offered
+  concrete alternatives rather than quietly giving up or trying to route around the classifier.
+  User chose to run the same test interactively instead - a real session with a human directly
+  present authorizing each step, the exact distinction the classifier's concern doesn't apply to.
+  Generated another fresh short-lived key, confirmed `google-auth`/`requests` were already
+  available locally (no new dependency needed), then ran a real Python script using
+  `google.oauth2.service_account.Credentials` + `AuthorizedSession` - genuine JWT-based
+  service-account auth with zero `gcloud` CLI involvement anywhere - to POST a trivial build
+  directly to Cloud Build's REST API. **Real, complete success, watched end to end, not just
+  trusted from the first response**: HTTP 200, a real build ID came back
+  (`3493031b-9011-4bd9-ac99-5e78b1dfd526`), and polling the build status confirmed it actually
+  reached `SUCCESS` in two ~10s cycles, with a real Cloud Build console log URL to show for it.
+  Revoked the key immediately after, same as every other test key this session - nothing left
+  live once the answer was in hand.
+  Real, honest bottom line logged in `not_started.md`: the *mechanism* is now proven, not just
+  theorized - but wiring it into the actual production routine still means embedding a credential
+  into an unattended context again, the same category of decision that already went wrong once
+  today for a different reason (the credential turned out to be useless, not that embedding it was
+  inherently wrong) - so that's flagged as needing the user's explicit go-ahead again before being
+  built, not treated as a foregone conclusion just because the underlying idea now checks out.
+
+- (2026-08-09, later same day) User said to go ahead and build the actual builder image. Docker
+  Desktop wasn't running locally, so rather than starting it, built the image via Cloud Build
+  itself instead - `gcloud builds submit --tag`, using the normal session's own already-
+  authenticated `gcloud` (no new service-account key needed for this part, unlike the auth tests).
+  Pulled the exact SDK/build-tools/NDK/CMake version strings straight from
+  `app/build.gradle.kts` rather than guessing generic ones. Created a new dedicated Artifact
+  Registry repo (`android-builder`) rather than reusing the existing `cloud-run-source-deploy` one,
+  to keep a persistent reusable image cleanly separated from ephemeral per-deploy source builds.
+  Real result: built clean in 4 minutes, confirmed via the actual Cloud Build log, not just a "no
+  error" assumption.
+  Then ran the real test that actually mattered: used the new image to build **this app**, not a
+  synthetic project - submitted the real repo source (`.gitignore` already excluded `build/`,
+  `.gradle/`, `.cxx/`, `.env`, keeping the upload to ~235MB rather than everything) with a Cloud
+  Build config running `./gradlew :app:assembleDebug`. The top-level result showed "FAILURE" -
+  did not take that at face value. Read the actual log line by line instead: Gradle itself printed
+  `BUILD SUCCESSFUL in 2m 53s` with all 42 tasks executed, the native RNNoise C code compiled
+  cleanly through CMake/ninja, and a real 66,982,096-byte `app-debug.apk` existed exactly where
+  Gradle puts it. The actual failure was `bash: line 5: file: command not found` - the diagnostic
+  script's own last verification step called `file` on the APK as a sanity check, and that
+  utility simply isn't in the minimal builder image. A gap in the throwaway test script, not in
+  the build or the underlying idea - confirmed by tracing the real log rather than trusting the
+  top-level Cloud Build status alone, the same "verify the actual evidence, not the summary"
+  discipline this whole session has run on.
+  Cleaned up the temporary `cloudbuild-android-test.yaml` from the repo root (a diagnostic
+  artifact, never meant to be committed). Logged the full, honest result in `not_started.md` and
+  `done.md`: the complete idea is proven end to end now - JWT-REST auth, Cloud Build triggering,
+  and this specific app's real native-code build all confirmed working with real evidence, not
+  assumed at any point. What's deliberately not done: wiring any of this into the actual
+  production routine, which would mean embedding a credential into an unattended context again -
+  flagged as needing the user's explicit decision, not treated as automatically following from
+  today's proof.
 
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after

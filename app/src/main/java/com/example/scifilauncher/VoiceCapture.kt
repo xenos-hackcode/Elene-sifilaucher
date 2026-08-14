@@ -18,7 +18,11 @@ import kotlinx.coroutines.withContext
  * needs the full requested duration even through natural pauses/breaths, so trimming only
  * happens afterward, on the complete recording.
  */
-suspend fun recordVoiceSample(context: Context, durationSamples: Int = VOICE_SAMPLE_COUNT): FloatArray? =
+suspend fun recordVoiceSample(
+    context: Context,
+    durationSamples: Int = VOICE_SAMPLE_COUNT,
+    requestFocus: Boolean = true
+): FloatArray? =
     withContext(Dispatchers.IO) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -55,7 +59,12 @@ suspend fun recordVoiceSample(context: Context, durationSamples: Int = VOICE_SAM
         }.getOrNull()
         aec?.enabled = true
 
-        val focusHandle = requestAudioFocus(context, transient = true)
+        // Skippable for callers that poll in the background (e.g. the "Hey Elene" audio wake-
+        // word check, which runs every few seconds while dormant) - grabbing transient focus
+        // that often would duck/pause the user's media for no real reason most of the time,
+        // exactly the annoyance the STT-based wake check already avoids by skipping AudioFocus
+        // entirely for passive checks.
+        val focusHandle = if (requestFocus) requestAudioFocus(context, transient = true) else null
 
         val pcm = ShortArray(durationSamples)
         try {
@@ -71,7 +80,7 @@ suspend fun recordVoiceSample(context: Context, durationSamples: Int = VOICE_SAM
             runCatching { recorder.stop() }
             recorder.release()
             runCatching { aec?.release() }
-            releaseAudioFocus(context, focusHandle)
+            if (requestFocus) releaseAudioFocus(context, focusHandle)
         }
 
         val raw = FloatArray(pcm.size) { i -> pcm[i] / 32768f }

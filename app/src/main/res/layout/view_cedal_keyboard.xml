@@ -3,15 +3,10 @@
     android:id="@+id/cedal_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="#FF020202">
+    android:background="#FF16181D">
 
-    <!-- Green matrix rain background -->
-    <com.example.scifilauncher.CedalMatrixRainView
-        android:id="@+id/cedal_rain"
-        android:layout_width="match_parent"
-        android:layout_height="200dp" />
-
-    <!-- Keyboard content on top (transparent background) -->
+    <!-- Cedal is the professional keyboard - no matrix rain here (that moved to Xenos, the
+         hacker/cyber one), plain neutral dark background instead. -->
     <LinearLayout
         android:id="@+id/xenos_root"
         android:layout_width="match_parent"
@@ -34,9 +29,9 @@
                 android:id="@+id/btn_clipboard"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
-                android:background="@drawable/xenos_key_black"
+                android:background="@drawable/cedal_key_normal"
                 android:src="@android:drawable/ic_menu_save"
-                android:tint="#FF09C20C"
+                android:tint="#FF4C8DFF"
                 android:contentDescription="Clipboard" />
 
             <ImageButton
@@ -44,9 +39,9 @@
                 android:layout_width="32dp"
                 android:layout_height="32dp"
                 android:layout_marginStart="4dp"
-                android:background="@drawable/xenos_key_black"
+                android:background="@drawable/cedal_key_normal"
                 android:src="@android:drawable/ic_menu_manage"
-                android:tint="#FF09C20C"
+                android:tint="#FF4C8DFF"
                 android:contentDescription="Settings" />
 
         </LinearLayout>
@@ -77,8 +72,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="1"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_2"
@@ -86,8 +81,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="2"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_3"
@@ -95,8 +90,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="3"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_4"
@@ -104,8 +99,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="4"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_5"
@@ -113,8 +108,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="5"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_6"
@@ -122,8 +117,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="6"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_7"
@@ -131,8 +126,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="7"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_8"
@@ -140,8 +135,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="8"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_9"
@@ -149,8 +144,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="9"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_0"
@@ -158,8 +153,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="0"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Row 1: Q W E R T Y U I O P -->
@@ -175,8 +170,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="Q"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_w"
@@ -184,8 +179,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="W"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_e"
@@ -193,8 +188,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="E"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_r"
@@ -202,8 +197,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="R"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_t"
@@ -211,8 +206,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="T"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_y"
@@ -220,8 +215,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="Y"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_u"
@@ -229,8 +224,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="U"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_i"
@@ -238,8 +233,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="I"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_o"
@@ -247,8 +242,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="O"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_p"
@@ -256,8 +251,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="P"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Row 2: A S D F G H J K L -->
@@ -275,8 +270,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="A"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_s"
@@ -284,8 +279,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="S"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_d"
@@ -293,8 +288,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="D"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_f"
@@ -302,8 +297,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="F"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_g"
@@ -311,8 +306,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="G"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_h"
@@ -320,8 +315,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="H"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_j"
@@ -329,8 +324,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="J"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_k"
@@ -338,8 +333,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="K"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_l"
@@ -347,8 +342,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="L"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Row 3: Z X C V B N M -->
@@ -366,8 +361,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="Z"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_x"
@@ -375,8 +370,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="X"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_c"
@@ -384,8 +379,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="C"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_v"
@@ -393,8 +388,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="V"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_b"
@@ -402,8 +397,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="B"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_n"
@@ -411,8 +406,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="N"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_m"
@@ -420,8 +415,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="M"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Row 4: Shift, ?123/ABC, Space, Delete, Enter -->
@@ -439,8 +434,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="↑"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_theme"
@@ -448,8 +443,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="\?123"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_space"
@@ -457,8 +452,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="2"
                         android:text="space"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_delete"
@@ -466,8 +461,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="0.5"
                         android:text="⌫"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/key_enter"
@@ -475,8 +470,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="0.5"
                         android:text="⏎"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -501,8 +496,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="!"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_at"
@@ -510,8 +505,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="@"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_hash"
@@ -519,8 +514,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="#"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_dollar"
@@ -528,8 +523,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="$"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_percent"
@@ -537,8 +532,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="%"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_amp"
@@ -546,8 +541,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="&amp;"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_star"
@@ -555,8 +550,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="*"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_lparen"
@@ -564,8 +559,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="("
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_rparen"
@@ -573,8 +568,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text=")"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_underscore"
@@ -582,8 +577,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="_"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Symbols row 2: + - = / \ | ~ < > ± -->
@@ -599,8 +594,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="+"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_minus"
@@ -608,8 +603,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="-"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_equal"
@@ -617,8 +612,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="="
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_slash"
@@ -626,8 +621,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="/"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_backslash"
@@ -635,8 +630,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="\\"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_pipe"
@@ -644,8 +639,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="|"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_tilde"
@@ -653,8 +648,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="~"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_lt"
@@ -662,8 +657,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="&lt;"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_gt"
@@ -671,8 +666,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="&gt;"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_pm"
@@ -680,8 +675,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="±"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Symbols row 3: , . ? : ; ' " … • - -->
@@ -697,8 +692,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text=","
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_dot"
@@ -706,8 +701,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="."
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_question"
@@ -715,8 +710,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="?"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_colon"
@@ -724,8 +719,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text=":"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_semicolon"
@@ -733,8 +728,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text=";"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_quote"
@@ -742,8 +737,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="'"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_dquote"
@@ -751,8 +746,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="&quot;"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_ellipsis"
@@ -760,8 +755,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="…"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_bullet"
@@ -769,8 +764,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="•"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_hyphen"
@@ -778,8 +773,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="-"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
                 <!-- Symbols row 4: ABC, space, delete, enter -->
@@ -797,8 +792,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="1"
                         android:text="ABC"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_space"
@@ -806,8 +801,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="2"
                         android:text="space"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_delete"
@@ -815,8 +810,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="0.5"
                         android:text="⌫"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
 
                     <Button
                         android:id="@+id/sym_enter"
@@ -824,8 +819,8 @@
                         android:layout_height="48dp"
                         android:layout_weight="0.5"
                         android:text="⏎"
-                        android:textColor="#FF09C20C"
-                        android:background="@drawable/xenos_key_black" />
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
                 </LinearLayout>
 
             </LinearLayout>
@@ -845,39 +840,74 @@
                     android:padding="4dp" />
             </ScrollView>
 
-            <!-- Small settings overlay -->
+            <!-- Settings overlay: real productivity text tools, operate on whatever text is
+                 currently selected in the field being typed into. -->
             <LinearLayout
-                android:id="@+id/xenos_settings_overlay"
+                android:id="@+id/cedal_settings_overlay"
                 android:layout_width="match_parent"
-                android:layout_height="60dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
                 android:padding="8dp"
-                android:background="#CC000000"
+                android:background="#CC14161B"
                 android:visibility="gone">
 
                 <TextView
-                    android:id="@+id/txt_tiles"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/cedal_word_count"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Tiles"
-                    android:textColor="#FF09C20C"
-                    android:textSize="12sp" />
+                    android:text="0 words, 0 characters"
+                    android:textColor="#FFE4E7EC"
+                    android:textSize="12sp"
+                    android:paddingBottom="8dp" />
 
-                <Switch
-                    android:id="@+id/switch_color_mode"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp" />
+                    android:orientation="horizontal"
+                    android:weightSum="3">
+
+                    <Button
+                        android:id="@+id/tool_uppercase"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="40dp"
+                        android:layout_marginEnd="4dp"
+                        android:text="UPPER"
+                        android:textSize="11sp"
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
+
+                    <Button
+                        android:id="@+id/tool_lowercase"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="40dp"
+                        android:layout_marginEnd="4dp"
+                        android:text="lower"
+                        android:textSize="11sp"
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
+
+                    <Button
+                        android:id="@+id/tool_titlecase"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="40dp"
+                        android:text="Title Case"
+                        android:textSize="11sp"
+                        android:textColor="#FFE4E7EC"
+                        android:background="@drawable/cedal_key_normal" />
+                </LinearLayout>
 
                 <Button
-                    android:id="@+id/btn_change_mode"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="16dp"
-                    android:text="Change mode"
-                    android:textColor="#FF09C20C"
-                    android:background="@drawable/xenos_key_black" />
+                    android:id="@+id/tool_trim"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="4dp"
+                    android:text="Trim extra whitespace"
+                    android:textSize="11sp"
+                    android:textColor="#FFE4E7EC"
+                    android:background="@drawable/cedal_key_normal" />
             </LinearLayout>
 
         </FrameLayout>

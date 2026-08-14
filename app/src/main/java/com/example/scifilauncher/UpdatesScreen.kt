@@ -189,7 +189,7 @@ private fun UpdateRow(entry: UpdateProposalEntry, themeColor: Color, textColor: 
             )
         }
         Text(
-            text = if (entry.origin == ProposalOrigin.USER) "You asked" else "Elene suggested this",
+            text = if (entry.origin == ProposalOrigin.USER) "You asked" else "Xenos suggested this",
             color = Color.Gray,
             fontSize = 10.sp,
             fontFamily = FontFamily.Monospace

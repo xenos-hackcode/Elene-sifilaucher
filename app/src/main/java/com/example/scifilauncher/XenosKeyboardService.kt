@@ -84,13 +84,40 @@ class XenosKeyboardService : InputMethodService() {
             switchTiles.isChecked = !switchTiles.isChecked
         }
 
+        // Hacker text tools - each acts on whatever text is currently selected in the field
+        // being typed into (see KeyboardTextTools.applyToSelection for the "nothing selected"
+        // handling).
+        view.findViewById<Button>(R.id.tool_base64_enc).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::base64Encode)
+        }
+        view.findViewById<Button>(R.id.tool_base64_dec).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::base64Decode)
+        }
+        view.findViewById<Button>(R.id.tool_rot13).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::rot13)
+        }
+        view.findViewById<Button>(R.id.tool_hash).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::sha256Hex)
+        }
+        view.findViewById<Button>(R.id.tool_leet).setOnClickListener {
+            KeyboardTextTools.applyToSelection(currentInputConnection, this, KeyboardTextTools::leetspeak)
+        }
+
         // Clipboard button
+        // Real bug fixed 2026-08-11: this used to only ever open the clipboard panel - tapping
+        // Clipboard again while it was already open did nothing, no way back except tapping an
+        // actual clip. Now a second tap while open closes it back to the normal keyboard.
         btnClipboard.setOnClickListener {
-            settingsOverlay.visibility = View.GONE
-            keyArea.visibility = View.GONE
-            symbolArea.visibility = View.GONE
-            clipboardPanel.visibility = View.VISIBLE
-            populateClipboardList(clipboardList, view)
+            if (clipboardPanel.visibility == View.VISIBLE) {
+                clipboardPanel.visibility = View.GONE
+                keyArea.visibility = View.VISIBLE
+            } else {
+                settingsOverlay.visibility = View.GONE
+                keyArea.visibility = View.GONE
+                symbolArea.visibility = View.GONE
+                clipboardPanel.visibility = View.VISIBLE
+                populateClipboardList(clipboardList, view)
+            }
         }
 
         // Settings overlay (spanner) – now just toggles overlay for tiles
@@ -106,6 +133,7 @@ class XenosKeyboardService : InputMethodService() {
         val themeButton = view.findViewById<Button>(R.id.key_theme)
         themeButton.text = "?123"
         themeButton.setOnClickListener {
+            settingsOverlay.visibility = View.GONE
             if (keyArea.visibility == View.VISIBLE) {
                 keyArea.visibility = View.GONE
                 clipboardPanel.visibility = View.GONE
@@ -122,6 +150,7 @@ class XenosKeyboardService : InputMethodService() {
         // Symbols back to letters
         val symToLetters = view.findViewById<Button>(R.id.sym_to_letters)
         symToLetters.setOnClickListener {
+            settingsOverlay.visibility = View.GONE
             symbolArea.visibility = View.GONE
             keyArea.visibility = View.VISIBLE
             themeButton.text = "?123"
@@ -284,11 +313,21 @@ class XenosKeyboardService : InputMethodService() {
             currentInputConnection?.commitText("\n", 1)
         }
 
-        // Shift
+        // Shift: tap = one-shot capital (auto-reverts to lowercase after the next letter, via
+        // bindKey()'s own "if (capsOn && !isCapsLock)" check above); tap again while locked =
+        // fully off. Long-press = real caps lock (stays capital until tapped off).
+        //
+        // Real bug fixed 2026-08-11: this used to set isCapsLock = capsOn on every single tap,
+        // which made bindKey()'s one-shot-revert condition unreachable - so a single tap behaved
+        // exactly like caps lock (capitalized everything) instead of just the next letter.
         val shiftBtn = view.findViewById<Button>(R.id.key_shift)
         shiftBtn.setOnClickListener {
-            capsOn = !capsOn
-            isCapsLock = capsOn
+            if (isCapsLock) {
+                capsOn = false
+                isCapsLock = false
+            } else {
+                capsOn = !capsOn
+            }
             updateShiftVisual(view)
             rebindAllLetterKeys(view)
         }
@@ -371,7 +410,17 @@ class XenosKeyboardService : InputMethodService() {
             val txt1 = itemView.findViewById<TextView>(android.R.id.text1)
             val txt2 = itemView.findViewById<TextView>(android.R.id.text2)
 
-            txt1.text = entry.text
+            // simple_list_item_2's default text color assumes a light background - on this
+            // dark keyboard panel it rendered dark-on-dark, effectively invisible. Also cap
+            // the preview to one short line instead of dumping the full copied text into a
+            // cramped keyboard row - a long clip (a password, a paragraph) doesn't need to be
+            // fully exposed just sitting in the list; tapping it still pastes the real full
+            // text below, only the on-screen preview is shortened.
+            txt1.setTextColor(0xFF09C20C.toInt())
+            txt1.maxLines = 1
+            txt1.ellipsize = android.text.TextUtils.TruncateAt.END
+            txt1.text = entry.text.replace('\n', ' ').trim().take(60)
+            txt2.setTextColor(0xFF6B9E6B.toInt())
             txt2.text = DateFormat.format(timeFormat, entry.time)
 
             itemView.setOnClickListener {

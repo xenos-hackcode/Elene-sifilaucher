@@ -41,7 +41,7 @@ data class CapabilityInfo(
 
 private val CAPABILITIES = listOf(
     CapabilityInfo(
-        "Microphone", "Lets you talk to Elene by voice, and captures your spoken passphrase for 2-Step Verify.",
+        "Microphone", "Lets you talk to Xenos by voice, and captures your spoken passphrase for 2-Step Verify.",
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Microphone"
     ),
     CapabilityInfo(
@@ -49,7 +49,7 @@ private val CAPABILITIES = listOf(
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Camera"
     ),
     CapabilityInfo(
-        "Contacts", "Lets Elene work out who a message or reply is meant for when you ask her to read or respond to notifications.",
+        "Contacts", "Lets Xenos work out who a message or reply is meant for when you ask him to read or respond to notifications.",
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Contacts"
     ),
     CapabilityInfo(
@@ -73,7 +73,7 @@ private val CAPABILITIES = listOf(
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Permissions > Files and media"
     ),
     CapabilityInfo(
-        "Full network access / view WiFi & network state", "Lets Elene reach her backend AI service, and lets tracker blocking and Nearby Devices see your network state. Android doesn't let this be toggled per-app.",
+        "Full network access / view WiFi & network state", "Lets Xenos reach his backend AI service, and lets tracker blocking and Nearby Devices see your network state. Android doesn't let this be toggled per-app.",
         ControlSurface.NOT_TOGGLABLE, "Not a Settings toggle - granted at install"
     ),
     CapabilityInfo(
@@ -85,7 +85,7 @@ private val CAPABILITIES = listOf(
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > Special app access > Notification access"
     ),
     CapabilityInfo(
-        "Display over other apps", "Powers the Eye Comfort Shield screen tint and Elene's floating bubble when you're inside another app.",
+        "Display over other apps", "Powers the Eye Comfort Shield screen tint and Xenos's floating bubble when you're inside another app.",
         ControlSurface.PHONE_SETTINGS, "Settings > Apps > SciFiLauncher > Display over other apps"
     ),
     CapabilityInfo(
@@ -117,8 +117,8 @@ private val CAPABILITIES = listOf(
         ControlSurface.APP_SETTINGS, "Security > Tracker blocking"
     ),
     CapabilityInfo(
-        "Accessibility service", "Lets Elene read, scroll, click, and highlight things on screen when you ask her to - and lets her talk to you from a floating bubble while you're inside another app.",
-        ControlSurface.PHONE_SETTINGS, "Settings > Accessibility > SciFi Elene"
+        "Accessibility service", "Lets Xenos read, scroll, click, and highlight things on screen when you ask him to - and lets him talk to you from a floating bubble while you're inside another app.",
+        ControlSurface.PHONE_SETTINGS, "Settings > Accessibility > SciFi Xenos"
     ),
     CapabilityInfo(
         "Run at startup", "No special permission needed for this - it's your phone's Home app, so Android starts it automatically on every boot, same as any launcher.",
@@ -134,7 +134,8 @@ private val CAPABILITIES = listOf(
 fun CapabilitiesScreen(
     themeColor: Color,
     isDark: Boolean,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenDownload: () -> Unit
 ) {
     var infoFor by remember { mutableStateOf<CapabilityInfo?>(null) }
 
@@ -175,6 +176,42 @@ fun CapabilitiesScreen(
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(themeColor.copy(alpha = 0.14f))
+                    .clickable(onClick = onOpenDownload)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Download",
+                        color = if (isDark) Color.White else Color.Black,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Link to PC / Link to Phone - get or share the agent apps",
+                        color = Color.Gray,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Text(
+                    text = ">",
+                    color = themeColor,
+                    fontSize = 15.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 10.dp)
+                )
+            }
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(CAPABILITIES) { cap ->

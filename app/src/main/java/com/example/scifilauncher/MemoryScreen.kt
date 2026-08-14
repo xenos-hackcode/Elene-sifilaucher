@@ -68,7 +68,7 @@ fun MemoryScreen(
                 modifier = Modifier.padding(bottom = 4.dp)
             )
             Text(
-                text = "Everything you've told Elene to remember - tap ✕ to forget an entry.",
+                text = "Everything you've told Xenos to remember - tap ✕ to forget an entry.",
                 color = Color.Gray,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
@@ -77,7 +77,7 @@ fun MemoryScreen(
 
             if (entries.isEmpty()) {
                 Text(
-                    text = "Nothing remembered yet - say \"remember that...\" to Elene.",
+                    text = "Nothing remembered yet - say \"remember that...\" to Xenos.",
                     color = Color.Gray,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace

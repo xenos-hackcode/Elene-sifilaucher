@@ -78,7 +78,14 @@ private fun videoRect(outerSize: IntSize, aspect: Float, scale: Float, panOffset
 }
 
 /** Thin OkHttp WebSocket wrapper for the phone side of the laptop relay - pure network
- * plumbing, no Compose state of its own. The screen below owns state and lifecycle. */
+ * plumbing, no Compose state of its own. The screen below owns state and lifecycle.
+ *
+ * Auto-reconnects on drop with capped exponential backoff (2s -> 30s, mirrors the laptop
+ * agent's own reconnect loop) - the relay is over the public internet, not local WiFi, so a
+ * dropped connection is expected to happen (network handoff, backend instance recycling,
+ * walking out of signal) and should recover on its own rather than leaving the screen stuck
+ * on "Disconnected" until the user manually backs out and back in. `disconnect()` cancels
+ * any pending reconnect so leaving the screen doesn't leave a retry loop running behind it. */
 class LaptopControlClient(private val token: String) {
     private var ws: WebSocket? = null
     var onState: ((LaptopConnState) -> Unit)? = null
@@ -88,13 +95,19 @@ class LaptopControlClient(private val token: String) {
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
+    private val reconnectHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+    private var userDisconnected = false
+
     fun connect() {
+        userDisconnected = false
         onState?.invoke(LaptopConnState.CONNECTING)
         val request = Request.Builder()
             .url("wss://elene-backend-717899371194.us-central1.run.app/laptop/ws/phone/$token")
             .build()
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
                 onState?.invoke(LaptopConnState.WAITING_FOR_AGENT)
             }
 
@@ -115,17 +128,34 @@ class LaptopControlClient(private val token: String) {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 onState?.invoke(LaptopConnState.DISCONNECTED)
+                scheduleReconnect()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 onState?.invoke(LaptopConnState.DISCONNECTED)
+                scheduleReconnect()
             }
         })
     }
 
+    private fun scheduleReconnect() {
+        if (userDisconnected) return
+        reconnectHandler.postDelayed({
+            if (!userDisconnected) connect()
+        }, reconnectDelayMs)
+        reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+    }
+
     fun disconnect() {
+        userDisconnected = true
+        reconnectHandler.removeCallbacksAndMessages(null)
         runCatching { ws?.close(1000, null) }
         ws = null
+    }
+
+    companion object {
+        private const val INITIAL_RECONNECT_DELAY_MS = 2000L
+        private const val MAX_RECONNECT_DELAY_MS = 30000L
     }
 
     private fun send(json: JSONObject) {

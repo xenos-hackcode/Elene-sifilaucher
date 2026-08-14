@@ -2,9 +2,12 @@ from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
+from anthropic import Anthropic
+import base64
 import json
 import os
 import smtplib
+import time
 import requests
 from email.mime.text import MIMEText
 
@@ -12,11 +15,31 @@ from email.mime.text import MIMEText
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Fallback providers: if OpenAI errors (bad/revoked key, outage, rate limit, no credits), retry
+# with each of these in turn instead of just returning "I had a problem thinking just now" - found
+# live 2026-08-09 when a stale OPENAI_API_KEY silently broke every real request with no way to tell
+# from the phone. Only real chat/reasoning LLM providers are wired in here - STABILITY_API_KEY
+# (image generation), DEEPGRAM_API_KEY (speech-to-text), and REPLICATE_API_KEY (no simple universal
+# chat-completions endpoint, needs a per-model API shape) aren't a fit for this specific fallback
+# slot, they do different jobs. Groq and OpenRouter both expose an OpenAI-compatible REST API, so
+# they reuse the `openai` SDK pointed at a different base_url instead of a separate client library.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+ANTHROPIC_CHAT_MODEL_CHEAP = os.getenv("ANTHROPIC_CHAT_MODEL_CHEAP", "claude-haiku-4-5-20251001")
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+groq_client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1") if GROQ_API_KEY else None
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+openrouter_client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1") if OPENROUTER_API_KEY else None
+OPENROUTER_CHAT_MODEL = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
+
 GMAIL_USER = os.getenv("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_FEMALE1_VOICE_ID")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_MALE1_VOICE_ID")
 
 # Updates screen Stage 2 (2026-08-01): bridges a fingerprint-approved backend-change request
 # from the phone (which has no GitHub/GCP access of its own) to a scheduled cloud agent (which
@@ -24,8 +47,14 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_FEMALE1_VOICE_ID")
 # real GitHub issue the agent polls for; deliberately not a raw file/DB write, since GitHub
 # issues already give free state (open/closed) and a natural audit trail.
 GITHUB_PAT = os.getenv("GITHUB_PAT")
-GITHUB_REPO = "xenos-hackcode/Elene-sifilaucher"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "xenos-hackcode/Elene-sifilaucher")
 UPDATE_REQUEST_LABEL = "approved-backend-update"
+
+# Phoenix Protocol (small version, 2026-08-07): a Cloud Storage bucket this backend already has
+# write access to, used purely as a one-way backup destination for intruder-capture photos and
+# location history right before Sequence Mode's own ~30-day auto-wipe deletes them for good. Not
+# configured (None) means the endpoint below just reports itself unavailable rather than erroring.
+EVACUATION_BUCKET = os.getenv("EVACUATION_BUCKET")
 
 app = FastAPI()
 
@@ -78,12 +107,145 @@ class SubmitUpdateRequest(BaseModel):
     description: str
     category: str
 
+class EvacuationPhoto(BaseModel):
+    id: int
+    timestamp: int
+    reason: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    photo_base64: Optional[str] = None
+
+class EvacuationLocationPoint(BaseModel):
+    timestamp: int
+    lat: float
+    lon: float
+
+class EvacuateBackupRequest(BaseModel):
+    device_label: str
+    intruder_photos: List[EvacuationPhoto] = []
+    location_history: List[EvacuationLocationPoint] = []
+
 # ---- ENDPOINT ----
+
+def _strip_json_fence(raw: str) -> str:
+    """Claude/Llama sometimes wrap JSON in ```json ... ``` fences despite being told not to -
+    OpenAI's response_format=json_object never does this, so this is only needed on fallback paths."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    return raw
+
+
+def _openai_compatible_call(oai_client: OpenAI, model: str, system_prompt: str, messages: List[Dict[str, Any]], max_tokens: int, json_mode: bool) -> str:
+    kwargs: Dict[str, Any] = dict(model=model, messages=[{"role": "system", "content": system_prompt}] + messages, max_tokens=max_tokens)
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+    completion = oai_client.chat.completions.create(**kwargs)
+    return (completion.choices[0].message.content or "").strip()
+
+
+def _llm_reply(system_prompt: str, messages: List[Dict[str, Any]], max_tokens: int = 300, json_mode: bool = True) -> str:
+    """Text-only reasoning call with fallback across four independent providers/accounts, in order:
+    OpenAI (primary) -> Anthropic -> Groq -> OpenRouter. Returns the first successful provider's raw
+    text reply; re-raises the last error if every provider fails."""
+    last_error: Optional[Exception] = None
+
+    try:
+        return _openai_compatible_call(client, "gpt-4.1-mini", system_prompt, messages, max_tokens, json_mode)
+    except Exception as e:
+        print("Error calling OpenAI:", e)
+        last_error = e
+
+    if ANTHROPIC_API_KEY:
+        try:
+            sys_suffix = "\n\nRespond with ONLY the raw JSON object, no markdown fencing." if json_mode else ""
+            msg = anthropic_client.messages.create(
+                model=ANTHROPIC_CHAT_MODEL_CHEAP, max_tokens=max_tokens,
+                system=system_prompt + sys_suffix, messages=messages,
+            )
+            raw = msg.content[0].text if msg.content else ""
+            return _strip_json_fence(raw) if json_mode else raw
+        except Exception as e:
+            print("Error calling Anthropic fallback:", e)
+            last_error = e
+
+    if groq_client:
+        try:
+            raw = _openai_compatible_call(groq_client, GROQ_CHAT_MODEL, system_prompt, messages, max_tokens, json_mode)
+            return _strip_json_fence(raw) if json_mode else raw
+        except Exception as e:
+            print("Error calling Groq fallback:", e)
+            last_error = e
+
+    if openrouter_client:
+        try:
+            raw = _openai_compatible_call(openrouter_client, OPENROUTER_CHAT_MODEL, system_prompt, messages, max_tokens, json_mode)
+            return _strip_json_fence(raw) if json_mode else raw
+        except Exception as e:
+            print("Error calling OpenRouter fallback:", e)
+            last_error = e
+
+    raise last_error or RuntimeError("no LLM providers configured")
+
+
+def _llm_vision_reply(system_prompt: str, user_text: str, image_base64: str, max_tokens: int = 300, json_mode: bool = True) -> str:
+    """Same idea as _llm_reply but for screenshot-based calls - skips Groq since its configured
+    model (llama-3.1-8b-instant) is text-only and can't see the image, so it isn't a real fallback
+    here. OpenAI (primary) -> Anthropic -> OpenRouter (its configured model, openai/gpt-4o-mini, is
+    vision-capable and is served through OpenRouter's own account, independent of our OpenAI key)."""
+    openai_style_messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": user_text},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+        ],
+    }]
+    last_error: Optional[Exception] = None
+
+    try:
+        return _openai_compatible_call(client, "gpt-4.1-mini", system_prompt, openai_style_messages, max_tokens, json_mode)
+    except Exception as e:
+        print("Error calling OpenAI (vision):", e)
+        last_error = e
+
+    if ANTHROPIC_API_KEY:
+        try:
+            sys_suffix = "\n\nRespond with ONLY the raw JSON object, no markdown fencing." if json_mode else ""
+            msg = anthropic_client.messages.create(
+                model=ANTHROPIC_CHAT_MODEL_CHEAP, max_tokens=max_tokens,
+                system=system_prompt + sys_suffix,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}},
+                    ],
+                }],
+            )
+            raw = msg.content[0].text if msg.content else ""
+            return _strip_json_fence(raw) if json_mode else raw
+        except Exception as e:
+            print("Error calling Anthropic fallback (vision):", e)
+            last_error = e
+
+    if openrouter_client:
+        try:
+            raw = _openai_compatible_call(openrouter_client, OPENROUTER_CHAT_MODEL, system_prompt, openai_style_messages, max_tokens, json_mode)
+            return _strip_json_fence(raw) if json_mode else raw
+        except Exception as e:
+            print("Error calling OpenRouter fallback (vision):", e)
+            last_error = e
+
+    raise last_error or RuntimeError("no vision-capable LLM providers configured")
+
 
 @app.post("/elene/chat", response_model=EleneReply)
 async def elene_chat(body: EleneRequest) -> EleneReply:
     system_prompt = """
-You are Elene, the AI assistant inside the SciFiLauncher Android launcher.
+You are Xenos, the AI assistant inside the SciFiLauncher Android launcher.
 You control the launcher by returning JSON only, with this exact schema:
 {
   "mode": "chat" or "command",
@@ -99,7 +261,7 @@ Voice and tone:
 - Also mix in butler-style phrasing alongside the hacker tone where it fits naturally -
   "Yes, sir.", "Right away, sir.", "As you wish, sir." "Sir" is a tone flourish, not a
   replacement for how you address the user (see below) - use it in addition to, not
-  instead of, "Emperor"/"Xenos".
+  instead of, "Emperor".
 - Draw from hacker/military radio vocabulary where it fits naturally and stays clear -
   words like "initiating", "modulating", "engaging", "standing by", "executing",
   "terminated", "in progress", "acquired", "secured", "breach", "override", "systems
@@ -108,10 +270,8 @@ Voice and tone:
   less clear.
 
 Addressing the user:
-- Default to calling the user "Emperor".
-- If the user's message implies someone else is present, nearby, or listening
-  (e.g. "my friend is here", "someone's with me", "not alone right now"), address them
-  as "Xenos" instead for that reply only. Go back to "Emperor" once that's no longer implied.
+- Always call the user "Emperor" - this is separate from your own name (Xenos), never
+  address the user by your own name.
 
 Rules:
 - If the user is just chatting, use "mode": "chat" and set "commands" to [].
@@ -175,7 +335,7 @@ Rules:
     screen brightness, e.g. "brighten the screen", "dim it a bit", "set brightness to 50")
   - "start_screen_recording" (the user asks to start/begin recording their screen)
   - "stop_screen_recording" (the user asks to stop/end/finish the screen recording, or save it)
-  - "stop_listening" (the user is telling YOU, Elene, to stop listening/go away/be quiet for
+  - "stop_listening" (the user is telling YOU, Xenos, to stop listening/go away/be quiet for
     now - natural phrasings beyond the exact words "stop listening" itself, e.g. "that's all",
     "go away", "you can go now", "leave me alone", "go off", "shut up now". The device also
     recognizes the literal phrase "stop listening" itself locally without needing you at all -
@@ -185,6 +345,11 @@ Rules:
     the correct IANA zone id yourself from the place name, e.g. "what time is it in Tokyo"
     -> "world_clock:Asia/Tokyo", "time in New York" -> "world_clock:America/New_York". This
     is computed locally on-device from the zone id, no internet/API needed, so use it freely.)
+  - "multi_control:<app name>|<app name>|<app name>" (the user asks to open 2 or 3 apps at
+    once, side by side in real independently-usable windows, e.g. "split screen WhatsApp and
+    Chrome", "open Spotify, Maps and WhatsApp together", "multi control YouTube and Notes" -
+    use the apps' plain common names, pipe-separated, in the order the user said them. Needs
+    at least 2 apps and at most 3 - if the user names more than 3, use only the first 3.)
   - "next_page" / "previous_page" (page through the launcher's app grid)
   - "freeze_app:<app name>" (the user asks to freeze/pause/suspend an app, e.g. "freeze
     Block Blast", "pause Instagram" - this is NOT the same as open_app, never use open_app
@@ -242,7 +407,7 @@ Rules:
   - "describe_screen" or "describe_screen:<question>" (the user asks what's on their screen,
     to read something on screen, or asks a question about what's currently visible - e.g.
     "what's on my screen", "read this to me", "what does this say", "describe_screen:what's
-    the total on this receipt". This is the ONLY way Elene can actually see the screen - every
+    the total on this receipt". This is the ONLY way Xenos can actually see the screen - every
     other command works off text/labels, never pixels. CRITICAL: you have NO real information
     about what is currently on screen unless this exact request just triggered this command and
     its result was given back to you as context for THIS turn - you cannot see it, guess it, or
@@ -267,9 +432,9 @@ Rules:
     answer something it doesn't actually cover, and don't treat it as fresh once
     last_visual_insight_age_seconds is more than a few seconds old for anything precision-
     sensitive (exact text, exact numbers) - trigger a fresh describe_screen for those instead.)
-  - "play_game" or "play_game:<hint>" (the user asks Elene to play a game for them, e.g. "play
+  - "play_game" or "play_game:<hint>" (the user asks Xenos to play a game for them, e.g. "play
     this for me", "can you play this game", "play_game:candy crush". IMPORTANT: only offer or
-    accept this for slow, turn-based games (word games, match-3, card games, puzzles) - Elene
+    accept this for slow, turn-based games (word games, match-3, card games, puzzles) - Xenos
     thinks for 1-4+ seconds per move since it involves a real screenshot and a real decision
     each time, which does not work for fast/reflex/timed games (e.g. an endless runner, a
     rhythm game, anything with a countdown clock per move). Most popular mobile match-3/puzzle
@@ -279,7 +444,7 @@ Rules:
     from its name alone, ask the user directly ("is this move-based or does it need fast
     reactions?") rather than unilaterally refusing on a guess - a wrong refusal is worse than a
     quick clarifying question, since the user can already see the game and knows for certain.)
-  - "stop_game" (the user asks Elene to stop playing/stop the game loop - distinct from
+  - "stop_game" (the user asks Xenos to stop playing/stop the game loop - distinct from
     stop_listening, which dismisses the mic entirely rather than just ending a play session.)
 - Turning the phone itself off/rebooting it is NOT possible for any app on a normal,
   non-rooted device - it's an OS-level restriction. If the user asks for that, explain this
@@ -379,6 +544,41 @@ is no build/deploy pipeline behind this yet):
   right now if they tell you what they want changed. Don't just state the limitation and stop -
   always mention the real capability you do have in the same breath.
 
+Helping when something in the app seems broken (real, tested behavior - not guesses):
+- Notification action buttons (e.g. a call's real "End call"/"Answer", an email's
+  "Reply"/"Archive") and the "Now Playing" media card (real seek bar, play/pause, skip, loop,
+  2x/3x speed) both live in the notifications panel and both require Notification Access to be
+  granted (Settings > Notification Access, or the "ENABLE NOTIFICATION ACCESS" prompt shown
+  right there in the panel) - if the user says these are missing entirely, that's the first
+  thing to check, not a bug.
+- The Now Playing card only shows controls a given app actually declared support for
+  (seek/skip/etc.), and even a declared control isn't always honored - confirmed live during
+  testing that some apps (a sample loop/practice music app) implement pause and seek but never
+  actually respond to play() or speed changes from any external control at all, which is a gap
+  in that specific app's own code, not this launcher's. If the user says "play doesn't do
+  anything" or "2x/3x speed doesn't do anything" for a specific app, the honest answer is it
+  depends on that app - suggest trying a mainstream app (Spotify, YouTube Music, a podcast app)
+  to confirm the control itself works, rather than assuming the launcher is at fault.
+- "Loop" on Now Playing is this launcher's own approximation, not a real Android feature -
+  repeat/loop doesn't exist anywhere in the platform's media API at all. It works by watching
+  the playing track and restarting it near the end, but ONLY while the notifications panel
+  stays open, since that's the only time anything is actively watching. If the user says loop
+  stopped once they left the panel or locked the screen, that's expected behavior, not a bug -
+  say so plainly and explain it needs the panel open to keep working.
+- Recents (the "S" screen) shows a real screenshot of each app's last-seen state, taken shortly
+  after switching into it, plus a real last-opened time and open count. If a recently opened
+  app still shows just its icon instead of a screenshot, either it was too new to have captured
+  one yet, or Accessibility permission isn't granted (Settings > Accessibility) - that's what
+  actually drives Recents (not Notification Access, which is a separate permission for the
+  notification-related features above).
+- The router name/IP shown in Security > Network Protection is the real DHCP gateway of
+  whatever Wi-Fi network is currently connected - if it shows "unavailable", Wi-Fi likely isn't
+  connected right now, not a bug in the display.
+- If the user describes a specific problem that none of the above explains and it genuinely
+  sounds like a real bug, don't invent an explanation for it - say plainly that it sounds worth
+  reporting, and offer to queue it via propose_update (see above) rather than guessing at a
+  cause you're not sure of.
+
 If you are not fully certain what the user wants (ambiguous request, multiple things it
 could mean, missing information like which contact/app/target), ask a clarifying question
 in "mode": "chat" instead of guessing or issuing a command. Never assume.
@@ -428,19 +628,15 @@ Always return valid JSON. Do not add explanations outside JSON.
         )
 
     history = CONVERSATION_HISTORY.setdefault(body.user_id, [])
+    full_messages = history + [{"role": "user", "content": full_user_content}]
 
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            response_format={"type": "json_object"},  # force JSON output [web:302][web:309]
-            messages=(
-                [{"role": "system", "content": system_prompt}]
-                + history
-                + [{"role": "user", "content": full_user_content}]
-            ),
-            max_tokens=300,
-        )
-        raw = completion.choices[0].message.content.strip()
+        raw = _llm_reply(system_prompt, full_messages, max_tokens=300, json_mode=True)
+    except Exception as e:
+        print("All LLM providers failed:", e)
+        return EleneReply(intent="error", reply="I had a problem thinking just now.", command=None, commands=[])
+
+    try:
         data = json.loads(raw)
 
         mode = data.get("mode", "chat")
@@ -464,7 +660,7 @@ Always return valid JSON. Do not add explanations outside JSON.
         return EleneReply(intent=mode, reply=text, command=command, commands=commands)
 
     except Exception as e:
-        print("Error calling OpenAI:", e)
+        print("Error parsing model reply:", e)
         return EleneReply(intent="error", reply="I had a problem thinking just now.", command=None, commands=[])
 
 
@@ -539,36 +735,78 @@ async def submit_update_request(body: SubmitUpdateRequest) -> Dict[str, Any]:
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/elene/evacuate_backup")
+async def evacuate_backup(body: EvacuateBackupRequest) -> Dict[str, Any]:
+    """Phoenix Protocol (small version) - called once, right before Sequence Mode's own ~30-day
+    auto-wipe actually deletes intruder-capture photos and clears local data, and only when the
+    user has opted into Full-device wipe (see SequenceMode.kt's performSequenceWipe). Also
+    reachable from the Security screen's own manual "Test evacuation backup now" button so this
+    can be verified without triggering a real wipe. Uploads just the intruder photos and location
+    history - not the whole app's data, not a restore/reinstall flow - so a stolen/wiped phone
+    doesn't also mean losing the only evidence of who took it. Best-effort from the app's side:
+    a failure here never blocks the real wipe, which is the actual safety mechanism."""
+    if not EVACUATION_BUCKET:
+        return {"ok": False, "error": "Evacuation backup is not configured on this backend yet."}
+
+    try:
+        from google.cloud import storage
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket(EVACUATION_BUCKET)
+        prefix = f"evacuations/{body.device_label}/{int(time.time())}"
+
+        manifest: Dict[str, Any] = {
+            "device_label": body.device_label,
+            "uploaded_at_unix": int(time.time()),
+            "location_history": [p.dict() for p in body.location_history],
+            "intruder_photos": [],
+        }
+
+        uploaded_photos = 0
+        for photo in body.intruder_photos:
+            entry: Dict[str, Any] = {
+                "id": photo.id,
+                "timestamp": photo.timestamp,
+                "reason": photo.reason,
+                "lat": photo.lat,
+                "lng": photo.lng,
+            }
+            if photo.photo_base64:
+                blob = bucket.blob(f"{prefix}/photos/{photo.id}.jpg")
+                blob.upload_from_string(base64.b64decode(photo.photo_base64), content_type="image/jpeg")
+                entry["photo_object"] = blob.name
+                uploaded_photos += 1
+            manifest["intruder_photos"].append(entry)
+
+        manifest_blob = bucket.blob(f"{prefix}/manifest.json")
+        manifest_blob.upload_from_string(json.dumps(manifest, indent=2), content_type="application/json")
+
+        return {
+            "ok": True,
+            "uploaded_photos": uploaded_photos,
+            "location_points": len(body.location_history),
+        }
+    except Exception as e:
+        print("Error evacuating backup:", e)
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/elene/describe_screen")
 async def describe_screen(body: DescribeScreenRequest) -> Dict[str, Any]:
-    """One-shot 'what's on my screen' - Elene's only real visual perception (everything else
+    """One-shot 'what's on my screen' - Xenos's only real visual perception (everything else
     works off Accessibility Tree text, never pixels). Deliberately separate from /elene/chat:
     plain-text reply, no JSON forcing needed since it's spoken straight back via TTS."""
     prompt = (
-        "You are Elene's vision module. You're given a screenshot of an Android phone screen. "
+        "You are Xenos's vision module. You're given a screenshot of an Android phone screen. "
         "Describe concisely what's on it - 2-3 sentences unless the user's question needs more "
         "detail. If a question is given, answer it directly using only what's visible. Speak "
         "plainly, no markdown, no bullet points - this gets read aloud."
     )
     user_text = body.question if body.question else "What's on this screen?"
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_text},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{body.image_base64}"}},
-                    ],
-                },
-            ],
-        )
-        description = response.choices[0].message.content or ""
+        description = _llm_vision_reply(prompt, user_text, body.image_base64, max_tokens=300, json_mode=False)
         return {"description": description.strip()}
     except Exception as e:
-        print("Error calling OpenAI (describe_screen):", e)
+        print("All vision-capable LLM providers failed (describe_screen):", e)
         return {"description": None}
 
 
@@ -578,7 +816,7 @@ async def game_move(body: GameMoveRequest) -> Dict[str, Any]:
     /elene/chat: a much more constrained response format, and stateless (recent_moves carries
     continuity from the client instead of a server-side session), kept fast and cheap per call."""
     prompt = """
-You are Elene's game-playing module for a SLOW, TURN-BASED mobile game only (word games,
+You are Xenos's game-playing module for a SLOW, TURN-BASED mobile game only (word games,
 non-timed match-3, card games, puzzles) - never a fast/reflex game. You're given a screenshot
 and must decide ONE next move, fast and clearly. Return JSON only, this exact schema:
 {
@@ -597,22 +835,14 @@ screenshot clearly shows a game-over/results/win screen rather than active gamep
 """
     game_hint_line = f"The user said this game is: {body.game_hint}." if body.game_hint else ""
     recent_line = f"Recent moves so far: {'; '.join(body.recent_moves)}." if body.recent_moves else "This is the first move."
+    user_text = f"{game_hint_line} {recent_line}".strip()
     try:
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"{game_hint_line} {recent_line}".strip()},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{body.image_base64}"}},
-                    ],
-                },
-            ],
-        )
-        raw = response.choices[0].message.content or "{}"
+        raw = _llm_vision_reply(prompt, user_text, body.image_base64, max_tokens=300, json_mode=True)
+    except Exception as e:
+        print("All vision-capable LLM providers failed (game_move):", e)
+        return {"action": "give_up", "x": None, "y": None, "x2": None, "y2": None, "reasoning": "backend error", "game_over": False}
+
+    try:
         decision = json.loads(raw)
         return {
             "action": decision.get("action", "wait"),
@@ -624,7 +854,7 @@ screenshot clearly shows a game-over/results/win screen rather than active gamep
             "game_over": bool(decision.get("game_over", False)),
         }
     except Exception as e:
-        print("Error calling OpenAI (game_move):", e)
+        print("Error parsing model reply (game_move):", e)
         return {"action": "give_up", "x": None, "y": None, "x2": None, "y2": None, "reasoning": "backend error", "game_over": False}
 
 

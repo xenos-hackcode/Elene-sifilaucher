@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.RequestBody
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 data class EleneResponse(
     val intent: String,
@@ -29,12 +30,73 @@ data class GameMoveDecision(
     val gameOver: Boolean
 )
 
+/** One intruder-capture entry being backed up - mirrors IntruderCaptureLog's IntruderCapture,
+ * with the photo file already read and base64-encoded (or null if the file was missing/unreadable). */
+data class EvacuationPhoto(
+    val id: Long,
+    val timestamp: Long,
+    val reason: String,
+    val lat: Double?,
+    val lng: Double?,
+    val photoBase64: String?
+)
+
+/** One point from LocationHistory being backed up. */
+data class EvacuationLocationPoint(val timestamp: Long, val lat: Double, val lon: Double)
+
+data class EvacuationResult(val uploadedPhotos: Int, val locationPoints: Int)
+
 object EleneApiClient {
 
-    private const val ELENE_BASE_URL = "https://elene-backend-717899371194.us-central1.run.app"
+    // Not hardcoded to any specific deployment - this app is open source, and everyone who
+    // builds/runs it needs to point at their OWN backend (see backend/elene/.env.example),
+    // not share one person's Cloud Run instance and their API billing. Set once at startup
+    // from Settings > Elene Backend URL (persisted in theme_prefs) via configureBaseUrl();
+    // every call site below reads the current value through ELENE_BASE_URL. Left blank, every
+    // call in this file fails gracefully (caught by its own try/catch, returns null/false) -
+    // it does not crash.
+    @Volatile
+    private var ELENE_BASE_URL: String = ""
 
-    private val client = OkHttpClient()
+    fun configureBaseUrl(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("theme_prefs", android.content.Context.MODE_PRIVATE)
+        ELENE_BASE_URL = prefs.getString("elene_backend_url", "")?.trimEnd('/') ?: ""
+    }
+
+    fun currentBaseUrl(): String = ELENE_BASE_URL
+
+    fun setBaseUrl(context: android.content.Context, url: String) {
+        val cleaned = url.trim().trimEnd('/')
+        context.getSharedPreferences("theme_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putString("elene_backend_url", cleaned).apply()
+        ELENE_BASE_URL = cleaned
+    }
+
+    // Cloud Run scales this service to zero when idle - real evidence (server-side Cloud Run
+    // logs) showed a cold-start /elene/chat call taking 22.6s, well past OkHttp's 10s default
+    // read timeout, so the client gave up even though the server went on to answer with a real
+    // 200. Generous margin here, not just enough to cover that one measurement.
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+    // Evacuation backups can carry several intruder photos in one request (unlike the other
+    // single-image calls here) - the default 10s timeouts are too tight for that, so this call
+    // gets its own longer-timeout client instead of raising it for every other call too. Found
+    // by real on-device failure, not assumed: raising only callTimeout wasn't enough - the
+    // per-stream readTimeout (still 10s, inherited unchanged from the base client) was what
+    // actually tripped first while waiting on the response, since elene-backend runs at
+    // minScale=0 (a ~9.5s cold start alone, confirmed elsewhere in this project) on top of the
+    // endpoint uploading each photo to GCS synchronously before it replies.
+    private val longUploadClient = client.newBuilder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(90, java.util.concurrent.TimeUnit.SECONDS)
+        .callTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
 
     suspend fun sendText(
         userId: String,
@@ -227,6 +289,70 @@ object EleneApiClient {
             }
         } catch (e: Exception) {
             Log.e("EleneApiClient", "game_move call failed", e)
+            null
+        }
+    }
+
+    /** Phoenix Protocol (small version) - uploads just the intruder-capture photos and location
+     * history to the backend's /elene/evacuate_backup. Called right before Sequence Mode's real
+     * ~30-day auto-wipe deletes this data for good (only when Full-device wipe is on), and from
+     * the Security screen's manual "Test evacuation backup now" button so it can be verified
+     * without a real wipe. Returns null on any failure - callers should treat this as best-effort
+     * and never let it block the actual wipe. */
+    suspend fun evacuateBackup(
+        deviceLabel: String,
+        intruderPhotos: List<EvacuationPhoto>,
+        locationHistory: List<EvacuationLocationPoint>
+    ): EvacuationResult? = withContext(Dispatchers.IO) {
+        try {
+            val root = JSONObject().apply {
+                put("device_label", deviceLabel)
+                put("intruder_photos", org.json.JSONArray().apply {
+                    intruderPhotos.forEach { p ->
+                        put(JSONObject().apply {
+                            put("id", p.id)
+                            put("timestamp", p.timestamp)
+                            put("reason", p.reason)
+                            put("lat", p.lat ?: JSONObject.NULL)
+                            put("lng", p.lng ?: JSONObject.NULL)
+                            put("photo_base64", p.photoBase64 ?: JSONObject.NULL)
+                        })
+                    }
+                })
+                put("location_history", org.json.JSONArray().apply {
+                    locationHistory.forEach { l ->
+                        put(JSONObject().apply {
+                            put("timestamp", l.timestamp)
+                            put("lat", l.lat)
+                            put("lon", l.lon)
+                        })
+                    }
+                })
+            }
+            val body = RequestBody.create(jsonMediaType, root.toString())
+            val request = Request.Builder()
+                .url("$ELENE_BASE_URL/elene/evacuate_backup")
+                .post(body)
+                .build()
+
+            longUploadClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("EleneApiClient", "evacuate_backup HTTP error: ${response.code}")
+                    return@withContext null
+                }
+                val respBody = response.body?.string() ?: return@withContext null
+                val json = JSONObject(respBody)
+                if (!json.optBoolean("ok", false)) {
+                    Log.e("EleneApiClient", "evacuate_backup failed: ${json.optString("error")}")
+                    return@withContext null
+                }
+                EvacuationResult(
+                    uploadedPhotos = json.optInt("uploaded_photos", 0),
+                    locationPoints = json.optInt("location_points", 0)
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("EleneApiClient", "evacuate_backup call failed", e)
             null
         }
     }

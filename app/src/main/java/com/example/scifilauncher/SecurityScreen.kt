@@ -29,6 +29,7 @@ fun SecurityScreen(
     isDark: Boolean,
     batteryMode: BatterySaverMode,
     lockPrefs: SharedPreferences,
+    languageOption: LanguageOption,
     onBackToDashboard: () -> Unit,
     onOpenHiddenApps: () -> Unit,
     onOpenStorage: () -> Unit,
@@ -65,11 +66,15 @@ fun SecurityScreen(
     onOpenLockScreenSettings: () -> Unit,
     onArmSequenceMode: () -> Unit,
     onExitSequenceMode: () -> Unit,
+    antiTheftModeEnabled: Boolean,
+    onToggleAntiTheftMode: (Boolean) -> Unit,
     onRequestCallScreeningRole: () -> Unit
 ) {
     var showListeningInfoDialog by remember { mutableStateOf(showListeningInfo) }
 
     var showManualArmInfo by remember { mutableStateOf(false) }
+    var showAntiTheftInfo by remember { mutableStateOf(false) }
+    var showEvacuationInfo by remember { mutableStateOf(false) }
     var showCedalSharedSystemInfo by remember { mutableStateOf(false) }
     var showLockdownInfo by remember { mutableStateOf(false) }
     var showLocationHistoryInfo by remember { mutableStateOf(false) }
@@ -81,7 +86,10 @@ fun SecurityScreen(
         modifier = Modifier.fillMaxSize()
     ) {
         PanelBackdrop(isDark = isDark)
-        androidx.compose.runtime.CompositionLocalProvider(LocalPanelIsDark provides isDark) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalPanelIsDark provides isDark,
+            LocalLanguage provides languageOption
+        ) {
 
         val scrollState = rememberScrollState()
 
@@ -89,13 +97,16 @@ fun SecurityScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-                .verticalScroll(scrollState),
+                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp),
             verticalArrangement = Arrangement.Top,
             horizontalAlignment = Alignment.Start
         ) {
+            // Fixed header - stays on screen while the section content below scrolls, same as
+            // SettingsScreen's own header. Previously this whole screen was one big scrollable
+            // Column including the back button, so scrolling down this (long) screen's sections
+            // scrolled the back button away too.
             Text(
-                text = "< DASH",
+                text = tr("back_dash"),
                 color = themeColor,
                 fontSize = 14.sp,
                 fontFamily = FontFamily.Monospace,
@@ -105,28 +116,37 @@ fun SecurityScreen(
             )
 
             Text(
-                text = "SECURITY CENTER",
+                text = tr("security_center_title"),
                 color = themeColor,
                 fontSize = 18.sp,
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            PanelSection(title = "DATA & MEDIA", themeColor = themeColor) {
-                PanelRow(label = "Freezer", themeColor = themeColor, onClick = onOpenFreezer)
-                PanelRow(label = "Hidden apps", themeColor = themeColor, onClick = onOpenHiddenApps)
-                PanelRow(label = "Intruder attempts", themeColor = themeColor, onClick = onOpenStorage)
-                PanelRow(label = "File manager", themeColor = themeColor, onClick = onOpenFileManager)
-                PanelRow(label = "Commands", themeColor = themeColor, showDivider = false, onClick = onOpenCommands)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(scrollState),
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.Start
+            ) {
+
+            PanelSection(title = tr("section_data_media"), themeColor = themeColor) {
+                PanelRow(label = tr("row_freezer"), themeColor = themeColor, onClick = onOpenFreezer)
+                PanelRow(label = tr("row_hidden_apps"), themeColor = themeColor, onClick = onOpenHiddenApps)
+                PanelRow(label = tr("row_intruder_attempts"), themeColor = themeColor, onClick = onOpenStorage)
+                PanelRow(label = tr("row_file_manager"), themeColor = themeColor, onClick = onOpenFileManager)
+                PanelRow(label = tr("row_commands"), themeColor = themeColor, showDivider = false, onClick = onOpenCommands)
             }
 
-            PanelSection(title = "ACTIVITY", themeColor = themeColor) {
-                PanelRow(label = "Requests", themeColor = themeColor, onClick = onOpenRequests)
-                PanelRow(label = "Updates", themeColor = themeColor, onClick = onOpenUpdates)
-                PanelRow(label = "Log", themeColor = themeColor, onClick = onOpenAppLog)
-                PanelRow(label = "New app installs", themeColor = themeColor, onClick = onOpenInstallFlags)
+            PanelSection(title = tr("section_activity"), themeColor = themeColor) {
+                PanelRow(label = tr("row_requests"), themeColor = themeColor, onClick = onOpenRequests)
+                PanelRow(label = tr("row_updates"), themeColor = themeColor, onClick = onOpenUpdates)
+                PanelRow(label = tr("row_log"), themeColor = themeColor, onClick = onOpenAppLog)
+                PanelRow(label = tr("row_new_app_installs"), themeColor = themeColor, onClick = onOpenInstallFlags)
                 PanelToggleRow(
-                    label = "Watch new installs",
+                    label = tr("row_watch_new_installs"),
                     themeColor = themeColor,
                     checked = installWatchEnabled,
                     showDivider = false,
@@ -134,64 +154,66 @@ fun SecurityScreen(
                 )
             }
 
-            PanelSection(title = "SEQUENCE MODE", themeColor = themeColor) {
+            PanelSection(title = tr("section_sequence_mode"), themeColor = themeColor) {
                 Text(
-                    text = "Anti-theft system. \"Standing by\" = watching normally. \"ACTIVE\" " +
-                            "means a failed identity check triggered lockdown just now. Auto-arms " +
-                            "on two real signals: 3 failed fingerprint scans within 10 minutes " +
-                            "(immediate), or a sudden motion spike (asks \"are you running?\" " +
-                            "first, then arms if not confirmed by fingerprint within 10 minutes) " +
-                            "- plus the manual trigger below.",
+                    text = tr("sequence_mode_desc"),
                     color = Color.Gray,
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
                 PanelStaticInfoRow(
-                    label = "Anti-theft status",
+                    label = tr("row_anti_theft_status"),
                     value = when {
-                        isSequenceModeActive(lockPrefs) -> "ACTIVE - locked down"
-                        isMotionAlertPending(lockPrefs) -> "Awaiting confirmation (motion detected)"
-                        else -> "Standing by"
+                        isSequenceModeActive(lockPrefs) -> tr("status_active_locked_down")
+                        isMotionAlertPending(lockPrefs) -> tr("status_awaiting_confirmation")
+                        else -> tr("status_standing_by")
                     },
                     valueColor = if (isSequenceModeActive(lockPrefs) || isMotionAlertPending(lockPrefs)) Color.Red else themeColor,
                     themeColor = themeColor
                 )
                 if (isSequenceModeActive(lockPrefs)) {
                     PanelRow(
-                        label = "Exit Sequence Mode",
+                        label = tr("row_exit_sequence_mode"),
                         themeColor = themeColor,
                         onClick = onExitSequenceMode
                     )
                 } else {
                     PanelRow(
-                        label = "Trigger lockdown now",
+                        label = tr("row_trigger_lockdown_now"),
                         themeColor = themeColor,
                         onInfoClick = { showManualArmInfo = true },
                         onClick = onArmSequenceMode
                     )
                 }
+                PanelToggleRow(
+                    label = tr("row_anti_theft_mode"),
+                    themeColor = themeColor,
+                    checked = antiTheftModeEnabled,
+                    onToggle = { onToggleAntiTheftMode(it) },
+                    onInfoClick = { showAntiTheftInfo = true }
+                )
                 val lastLocation = loadLastKnownLocation(lockPrefs) ?: currentDeviceLocation
                 PanelStaticInfoRow(
-                    label = "Last known location",
+                    label = tr("row_last_known_location"),
                     value = if (lastLocation != null) {
                         val (lat, lng, at) = lastLocation
                         val minutesAgo = (System.currentTimeMillis() - at) / 60_000L
-                        if (minutesAgo <= 0) "Just now" else "$minutesAgo min ago"
+                        if (minutesAgo <= 0) tr("value_just_now") else tr("value_min_ago", minutesAgo.toString())
                     } else {
-                        "Unavailable"
+                        tr("value_unavailable")
                     },
                     valueColor = Color.Gray,
                     themeColor = themeColor
                 )
                 PanelRow(
-                    label = "Location history",
+                    label = tr("row_location_history"),
                     themeColor = themeColor,
-                    value = "${locationHistoryCount} entries",
+                    value = tr("value_entries", locationHistoryCount.toString()),
                     onClick = onOpenLocationHistory
                 )
                 PanelToggleRow(
-                    label = "Track location history",
+                    label = tr("row_track_location_history"),
                     themeColor = themeColor,
                     checked = locationHistoryEnabled,
                     onToggle = onToggleLocationHistory,
@@ -199,48 +221,71 @@ fun SecurityScreen(
                 )
                 if (deviceAdminActive) {
                     PanelStaticInfoRow(
-                        label = "OS-level lockdown",
-                        value = "ENABLED",
+                        label = tr("row_os_level_lockdown"),
+                        value = tr("value_enabled"),
                         valueColor = themeColor,
                         themeColor = themeColor
                     )
                 } else {
                     PanelRow(
-                        label = "Enable OS-level lockdown",
+                        label = tr("row_enable_os_level_lockdown"),
                         themeColor = themeColor,
                         onInfoClick = { showLockdownInfo = true },
                         onClick = onRequestDeviceAdmin
                     )
                 }
                 PanelToggleRow(
-                    label = "Full-device wipe if never recovered",
+                    label = tr("row_full_device_wipe"),
                     themeColor = themeColor,
                     checked = fullWipeEnabled,
-                    showDivider = false,
                     onToggle = { onToggleFullWipe(it) },
                     onInfoClick = { showFullWipeInfo = true }
                 )
+                val evacContext = LocalContext.current
+                val evacScope = rememberCoroutineScope()
+                var evacBusy by remember { mutableStateOf(false) }
+                var evacStatus by remember { mutableStateOf<String?>(null) }
+                val evacFailedMsg = tr("evac_failed_generic")
+                PanelRow(
+                    label = tr("row_test_evacuation_backup"),
+                    themeColor = themeColor,
+                    value = if (evacBusy) tr("value_uploading") else evacStatus ?: tr("value_not_run_yet"),
+                    showDivider = false,
+                    onInfoClick = { showEvacuationInfo = true },
+                    onClick = {
+                        if (evacBusy) return@PanelRow
+                        evacBusy = true
+                        evacStatus = null
+                        evacScope.launch {
+                            val result = PhoenixEvacuation.uploadBackup(evacContext)
+                            evacStatus = result ?: evacFailedMsg
+                            evacBusy = false
+                        }
+                    }
+                )
             }
 
-            PanelSection(title = "NETWORK PROTECTION", themeColor = themeColor) {
+            PanelSection(title = tr("section_network_protection"), themeColor = themeColor) {
                 PanelToggleRow(
-                    label = "Tracker & ad blocking",
+                    label = tr("row_tracker_ad_blocking"),
                     themeColor = themeColor,
                     checked = trackerBlockingActive,
                     onToggle = { onToggleTrackerBlocking(it) }
                 )
+                val routerContext = LocalContext.current
+                val gatewayIp = remember { currentWifiStatus(routerContext).gatewayIp }
                 PanelRow(
-                    label = "Router",
+                    label = tr("row_router"),
                     themeColor = themeColor,
-                    value = "Sky",
+                    value = gatewayIp ?: tr("value_unavailable"),
                     onClick = onOpenRouterSettings
                 )
                 var showProxyDialog by remember { mutableStateOf(false) }
                 var proxyInput by remember(proxyAddress) { mutableStateOf(proxyAddress) }
                 PanelRow(
-                    label = "Traffic proxy",
+                    label = tr("row_traffic_proxy"),
                     themeColor = themeColor,
-                    value = proxyAddress.ifBlank { "Not set" },
+                    value = proxyAddress.ifBlank { tr("value_not_set") },
                     showDivider = false,
                     onInfoClick = { showProxyDialog = true },
                     onClick = { showProxyDialog = true }
@@ -248,17 +293,11 @@ fun SecurityScreen(
                 if (showProxyDialog) {
                     AlertDialog(
                         onDismissRequest = { showProxyDialog = false },
-                        title = { Text("Traffic proxy", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        title = { Text(tr("row_traffic_proxy"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                         text = {
                             Column {
                                 Text(
-                                    "Point this phone's traffic (tracker/ad blocking still applies first) at " +
-                                        "a real intercepting proxy - mitmproxy or Burp Suite - running on your " +
-                                        "own laptop on the same network. This app doesn't read, block, or edit " +
-                                        "traffic content itself beyond the domain blocklist above - the proxy " +
-                                        "does that, since it's already built and trusted for exactly this. " +
-                                        "Leave blank to turn this off. Takes effect next time tracker & ad " +
-                                        "blocking is turned on.",
+                                    tr("dialog_traffic_proxy_body"),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     modifier = Modifier.padding(bottom = 12.dp)
@@ -266,7 +305,7 @@ fun SecurityScreen(
                                 OutlinedTextField(
                                     value = proxyInput,
                                     onValueChange = { proxyInput = it },
-                                    label = { Text("ip:port", fontFamily = FontFamily.Monospace) },
+                                    label = { Text(tr("label_ip_port"), fontFamily = FontFamily.Monospace) },
                                     singleLine = true
                                 )
                             }
@@ -275,20 +314,20 @@ fun SecurityScreen(
                             TextButton(onClick = {
                                 onProxyAddressChange(proxyInput.trim())
                                 showProxyDialog = false
-                            }) { Text("SAVE", color = themeColor, fontFamily = FontFamily.Monospace) }
+                            }) { Text(tr("action_save"), color = themeColor, fontFamily = FontFamily.Monospace) }
                         },
                         dismissButton = {
                             TextButton(onClick = { showProxyDialog = false }) {
-                                Text("CANCEL", color = themeColor, fontFamily = FontFamily.Monospace)
+                                Text(tr("action_cancel"), color = themeColor, fontFamily = FontFamily.Monospace)
                             }
                         }
                     )
                 }
             }
 
-            PanelSection(title = "CEDAL SHARED SYSTEM", themeColor = themeColor) {
+            PanelSection(title = tr("section_cedal_shared_system"), themeColor = themeColor) {
                 PanelToggleRow(
-                    label = "Cedal Shared System",
+                    label = tr("row_cedal_shared_system"),
                     themeColor = themeColor,
                     checked = cedalSharedSystemEnabled,
                     showDivider = false,
@@ -297,17 +336,17 @@ fun SecurityScreen(
                 )
             }
 
-            PanelSection(title = "SHIZUKU", themeColor = themeColor) {
+            PanelSection(title = tr("section_shizuku"), themeColor = themeColor) {
                 var shizukuAvailable by remember { mutableStateOf(ShizukuManager.isAvailable()) }
                 var shizukuGranted by remember { mutableStateOf(ShizukuManager.hasPermission()) }
                 var showShizukuInfo by remember { mutableStateOf(false) }
                 PanelRow(
-                    label = "Shizuku access",
+                    label = tr("row_shizuku_access"),
                     themeColor = themeColor,
                     value = when {
-                        !shizukuAvailable -> "Not running"
-                        shizukuGranted -> "Granted"
-                        else -> "Tap to grant"
+                        !shizukuAvailable -> tr("value_not_running")
+                        shizukuGranted -> tr("value_granted")
+                        else -> tr("value_tap_to_grant")
                     },
                     showDivider = false,
                     onInfoClick = { showShizukuInfo = true },
@@ -323,33 +362,13 @@ fun SecurityScreen(
                         onDismissRequest = { showShizukuInfo = false },
                         confirmButton = {
                             TextButton(onClick = { showShizukuInfo = false }) {
-                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                             }
                         },
-                        title = { Text("Shizuku access", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        title = { Text(tr("row_shizuku_access"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                         text = {
                             Text(
-                                "Shizuku lets this app run commands with real ADB/shell-level " +
-                                    "privilege - the same access `adb shell` has - without " +
-                                    "rooting the phone. It unlocks a genuine force-stop " +
-                                    "(matching Settings > App Info > Force Stop exactly), " +
-                                    "instead of the lighter \"stop background processes\" this " +
-                                    "app falls back to without it.\n\n" +
-                                    "Install: search \"Shizuku\" on the Play Store first. If your " +
-                                    "Android version isn't listed there yet (seen on Android " +
-                                    "16), get the official APK instead from " +
-                                    "github.com/RikkaApps/Shizuku (Releases tab) and install " +
-                                    "that file directly.\n\n" +
-                                    "Setup happens outside this app: open Shizuku, go to its " +
-                                    "Wireless debugging section and pair it with Developer " +
-                                    "Options > Wireless debugging (use \"Pair device with " +
-                                    "pairing code\" directly from Developer Options if Shizuku's " +
-                                    "own auto-search hangs), then tap Start - pairing alone does " +
-                                    "not start the service, Start is a separate step. On most " +
-                                    "phones Start needs redoing after a reboot unless the device " +
-                                    "is rooted (pairing itself is remembered). Nothing here " +
-                                    "works silently - you'll see Shizuku's own permission prompt " +
-                                    "the first time this app asks.",
+                                tr("dialog_shizuku_body"),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
@@ -358,14 +377,14 @@ fun SecurityScreen(
                 }
             }
 
-            PanelSection(title = "PHONE CALLS", themeColor = themeColor) {
+            PanelSection(title = tr("section_phone_calls"), themeColor = themeColor) {
                 val callContext = LocalContext.current
                 var callScreeningGranted by remember { mutableStateOf(hasCallScreeningRole(callContext)) }
                 var showCallScreeningInfo by remember { mutableStateOf(false) }
                 PanelRow(
-                    label = "Decline calls by voice",
+                    label = tr("row_decline_calls_by_voice"),
                     themeColor = themeColor,
-                    value = if (callScreeningGranted) "Granted" else "Tap to grant",
+                    value = if (callScreeningGranted) tr("value_granted") else tr("value_tap_to_grant"),
                     showDivider = false,
                     onInfoClick = { showCallScreeningInfo = true },
                     onClick = {
@@ -380,24 +399,13 @@ fun SecurityScreen(
                         onDismissRequest = { showCallScreeningInfo = false },
                         confirmButton = {
                             TextButton(onClick = { showCallScreeningInfo = false }) {
-                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                             }
                         },
-                        title = { Text("Decline calls by voice", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        title = { Text(tr("row_decline_calls_by_voice"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                         text = {
                             Text(
-                                "Saying \"pick it up\" to answer a real cellular call already " +
-                                    "works without this. Declining/hanging up a call by voice on " +
-                                    "a real cellular call specifically needs this app to hold " +
-                                    "Android's \"Caller ID & spam\" role - there's no other way " +
-                                    "for a non-default-phone-app to reject a ringing call. This " +
-                                    "opens the real system prompt for that role; on some phones " +
-                                    "it may compete with a built-in Caller ID app for the same " +
-                                    "role. Even once granted, declining several seconds after a " +
-                                    "call starts ringing (rather than instantly) isn't guaranteed " +
-                                    "to work - that's a real Android platform limitation, not a " +
-                                    "bug in this app. VoIP call declines (WhatsApp etc.) don't " +
-                                    "need this at all - those already work independently.",
+                                tr("dialog_decline_calls_body"),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
@@ -406,18 +414,18 @@ fun SecurityScreen(
                 }
             }
 
-            PanelSection(title = "VOICE ID", themeColor = themeColor) {
+            PanelSection(title = tr("section_voice_id"), themeColor = themeColor) {
                 val voiceContext = LocalContext.current
                 val voiceScope = rememberCoroutineScope()
                 var voiceEnrolled by remember { mutableStateOf(VoiceIdManager.isEnrolled(voiceContext)) }
                 var voiceBusy by remember { mutableStateOf(false) }
                 var voiceStatus by remember { mutableStateOf<String?>(null) }
                 var showVoiceInfo by remember { mutableStateOf(false) }
-                val voiceDrifting = remember { VoiceIdConfidenceLog.isDrifting(voiceContext) }
+                var voiceDrifting by remember { mutableStateOf(VoiceIdConfidenceLog.isDrifting(voiceContext)) }
 
                 if (voiceDrifting) {
                     Text(
-                        text = "Voice ID matches have been weaker lately - consider adding a fresh sample below.",
+                        text = tr("voice_id_drifting_warning"),
                         color = Color(0xFFFFA726),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
@@ -425,10 +433,11 @@ fun SecurityScreen(
                     )
                 }
 
+                val voiceCouldntRecordMsg = tr("voice_couldnt_record")
                 PanelRow(
-                    label = if (voiceEnrolled) "Add voice samples" else "Enroll voice",
+                    label = if (voiceEnrolled) tr("row_add_voice_samples") else tr("row_enroll_voice"),
                     themeColor = themeColor,
-                    value = if (voiceBusy) "Working..." else if (voiceEnrolled) "Enrolled" else "Not enrolled",
+                    value = if (voiceBusy) tr("value_working") else if (voiceEnrolled) tr("value_enrolled") else tr("value_not_enrolled"),
                     onInfoClick = { showVoiceInfo = true },
                     onClick = {
                         if (voiceBusy) return@PanelRow
@@ -451,9 +460,11 @@ fun SecurityScreen(
                                         var attempt = 0
                                         while (sample == null && attempt < 3) {
                                             attempt++
-                                            voiceStatus = (if (attempt == 1) "" else "Didn't catch that clearly - try again.\n") +
-                                                "${style.label} (take $take of 3, " +
-                                                "${style.recordSeconds}s) - say:\n\"${style.prompt}\""
+                                            voiceStatus = (if (attempt == 1) "" else uiString("voice_didnt_catch_that", languageOption)) +
+                                                uiString(
+                                                    "voice_take_prompt", languageOption,
+                                                    style.label, take.toString(), style.recordSeconds.toString(), style.prompt
+                                                )
                                             sample = recordVoiceSample(
                                                 voiceContext,
                                                 style.recordSeconds * VOICE_SAMPLE_RATE
@@ -469,10 +480,12 @@ fun SecurityScreen(
                                     }
                                 }
                                 voiceStatus = if (failed) {
-                                    "Couldn't record - check microphone permission."
+                                    voiceCouldntRecordMsg
                                 } else {
                                     voiceEnrolled = true
-                                    "Enrolled - all 5 styles."
+                                    VoiceIdConfidenceLog.clear(voiceContext)
+                                    voiceDrifting = false
+                                    uiString("voice_enrolled_all_styles", languageOption)
                                 }
                                 voiceBusy = false
                             }
@@ -480,25 +493,27 @@ fun SecurityScreen(
                     }
                 )
                 PanelRow(
-                    label = "Test voice match",
+                    label = tr("row_test_voice_match"),
                     themeColor = themeColor,
                     onClick = {
                         if (voiceBusy || !voiceEnrolled) return@PanelRow
                         voiceBusy = true
                         val style = VoiceStyle.entries.random()
-                        voiceStatus = "Say (${style.recordSeconds}s): \"${style.prompt}\""
+                        voiceStatus = uiString("voice_say_seconds", languageOption, style.recordSeconds.toString(), style.prompt)
                         voiceScope.launch {
                             val sample = recordVoiceSample(voiceContext, style.recordSeconds * VOICE_SAMPLE_RATE)
                             voiceStatus = if (sample == null) {
-                                "Couldn't record - check microphone permission."
+                                voiceCouldntRecordMsg
                             } else {
                                 val similarity = VoiceIdManager.verify(voiceContext, sample, style)
                                 if (similarity == null) {
-                                    "No enrollment on file for ${style.label}."
+                                    uiString("voice_no_enrollment_for", languageOption, style.label)
                                 } else {
                                     val pass = similarity >= style.threshold
-                                    "${style.label}: similarity %.2f (threshold %.2f) - %s".format(
-                                        similarity, style.threshold, if (pass) "MATCH" else "NO MATCH"
+                                    uiString(
+                                        "voice_similarity_result", languageOption,
+                                        style.label, "%.2f".format(similarity), "%.2f".format(style.threshold),
+                                        uiString(if (pass) "voice_match" else "voice_no_match", languageOption)
                                     )
                                 }
                             }
@@ -507,7 +522,7 @@ fun SecurityScreen(
                     }
                 )
                 PanelRow(
-                    label = "Reset enrollment",
+                    label = tr("row_reset_enrollment"),
                     themeColor = themeColor,
                     showDivider = false,
                     onClick = {
@@ -515,7 +530,7 @@ fun SecurityScreen(
                         onRequestBiometricForVoiceId {
                             VoiceIdManager.reset(voiceContext)
                             voiceEnrolled = false
-                            voiceStatus = "Enrollment cleared."
+                            voiceStatus = uiString("voice_enrollment_cleared", languageOption)
                         }
                     }
                 )
@@ -533,30 +548,13 @@ fun SecurityScreen(
                         onDismissRequest = { showVoiceInfo = false },
                         confirmButton = {
                             TextButton(onClick = { showVoiceInfo = false }) {
-                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                             }
                         },
-                        title = { Text("Voice ID", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        title = { Text(tr("dialog_voice_id_title"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                         text = {
                             Text(
-                                "Offline speaker verification (ECAPA-TDNN) - runs entirely on " +
-                                    "this device, nothing is sent anywhere. Enrollment records " +
-                                    "five different styles (a long phrase, a medium phrase, a " +
-                                    "short word, reciting letters, reciting digits) since a " +
-                                    "single word and a full sentence sound different enough " +
-                                    "that one reference doesn't compare fairly to both. Each " +
-                                    "style has its own match threshold - shorter ones are more " +
-                                    "lenient since there's less audio to work with.\n\n" +
-                                    "The lock screen's voice option just records and compares " +
-                                    "against the \"short word\" style directly.\n\n" +
-                                    "\"Add voice samples\" doesn't replace what's already " +
-                                    "enrolled - it adds to it. Your voice isn't one fixed " +
-                                    "thing (tired, sick, or just talking differently all sound " +
-                                    "a bit different), so if you keep getting rejected, come " +
-                                    "back here and add a fresh sample in whatever state your " +
-                                    "voice is in right now - verification checks against every " +
-                                    "sample you've added and accepts the closest match, not an " +
-                                    "average of all of them.",
+                                tr("dialog_voice_id_body"),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 13.sp
                             )
@@ -565,16 +563,16 @@ fun SecurityScreen(
                 }
             }
 
-            PanelSection(title = "KIOSK & LOCK SCREEN", themeColor = themeColor) {
+            PanelSection(title = tr("section_kiosk_lock_screen"), themeColor = themeColor) {
                 PanelToggleRow(
-                    label = "Kiosk mode",
+                    label = tr("row_kiosk_mode"),
                     themeColor = themeColor,
                     checked = kioskModeEnabled,
                     onToggle = { onToggleKioskMode(it) },
                     onInfoClick = { showKioskInfo = true }
                 )
                 PanelRow(
-                    label = "Change Android lock screen",
+                    label = tr("row_change_lock_screen"),
                     themeColor = themeColor,
                     showDivider = false,
                     onInfoClick = { showLockScreenInfo = true },
@@ -582,7 +580,7 @@ fun SecurityScreen(
                 )
             }
 
-            PanelSection(title = "INTEGRITY & TAMPER DETECTION", themeColor = themeColor) {
+            PanelSection(title = tr("section_integrity_tamper"), themeColor = themeColor) {
                 var showIntegrityInfo by remember { mutableStateOf(false) }
                 val context = LocalContext.current
                 val isGenuine = remember { AppIntegrityCheck.isGenuine(context) }
@@ -590,23 +588,23 @@ fun SecurityScreen(
                 val fridaResult = remember { runCatching { FridaDetector.scan() }.getOrNull() }
 
                 PanelStaticInfoRow(
-                    label = "App integrity",
-                    value = if (isGenuine) "Verified" else "MODIFIED - not the genuine build",
+                    label = tr("row_app_integrity"),
+                    value = if (isGenuine) tr("value_verified") else tr("value_modified"),
                     valueColor = if (isGenuine) themeColor else Color.Red,
                     themeColor = themeColor
                 )
                 PanelStaticInfoRow(
-                    label = "Root/Magisk",
-                    value = if (rootStatus.looksRooted) "Detected" else "Not detected",
+                    label = tr("row_root_magisk"),
+                    value = if (rootStatus.looksRooted) tr("value_detected") else tr("value_not_detected"),
                     valueColor = if (rootStatus.looksRooted) Color.Red else themeColor,
                     themeColor = themeColor
                 )
                 PanelStaticInfoRow(
-                    label = "SELinux",
+                    label = tr("row_selinux"),
                     value = when (rootStatus.selinuxEnforcing) {
-                        true -> "Enforcing"
-                        false -> "Permissive"
-                        null -> "Unknown"
+                        true -> tr("value_enforcing")
+                        false -> tr("value_permissive")
+                        null -> tr("value_unknown")
                     },
                     valueColor = when (rootStatus.selinuxEnforcing) {
                         true -> themeColor
@@ -616,12 +614,12 @@ fun SecurityScreen(
                     themeColor = themeColor
                 )
                 PanelStaticInfoRow(
-                    label = "Instrumentation (Frida)",
+                    label = tr("row_instrumentation_frida"),
                     value = when {
-                        fridaResult == null -> "Unavailable"
-                        fridaResult.signalCount == 0 -> "Not detected"
-                        fridaResult.signalCount == 1 -> "Possible (1 weak signal)"
-                        else -> "Detected (${fridaResult.signalCount} signals)"
+                        fridaResult == null -> tr("value_frida_unavailable")
+                        fridaResult.signalCount == 0 -> tr("value_not_detected")
+                        fridaResult.signalCount == 1 -> tr("value_frida_possible")
+                        else -> tr("value_frida_detected", fridaResult.signalCount.toString())
                     },
                     valueColor = when {
                         fridaResult == null -> Color.Gray
@@ -632,7 +630,7 @@ fun SecurityScreen(
                     themeColor = themeColor
                 )
                 PanelRow(
-                    label = "About these checks",
+                    label = tr("row_about_these_checks"),
                     themeColor = themeColor,
                     showDivider = false,
                     onClick = { showIntegrityInfo = true }
@@ -642,38 +640,16 @@ fun SecurityScreen(
                         onDismissRequest = { showIntegrityInfo = false },
                         confirmButton = {
                             TextButton(onClick = { showIntegrityInfo = false }) {
-                                Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                             }
                         },
-                        title = { Text("Integrity & tamper detection", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                        title = { Text(tr("section_integrity_tamper"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                         text = {
                             Text(
                                 modifier = Modifier
                                     .heightIn(max = 400.dp)
                                     .verticalScroll(rememberScrollState()),
-                                text =
-                                "App integrity compares this app's real signing certificate " +
-                                    "against the one baked in when it was built, to catch a " +
-                                    "repackaged or resigned copy running under this app's " +
-                                    "identity - it can't detect a stolen signing key used to " +
-                                    "sign a genuine-looking build, since that would pass " +
-                                    "legitimately.\n\n" +
-                                    "Root/Magisk checks common su binary paths and known Magisk " +
-                                    "package IDs. SELinux checks whether it's actually in " +
-                                    "enforcing mode. Worth being honest about the limit: root " +
-                                    "detection is a real cat-and-mouse game - Magisk's own " +
-                                    "hiding features (Zygisk, DenyList) exist specifically to " +
-                                    "spoof exactly these checks - so a clean result here is a " +
-                                    "signal to weigh, not a guarantee.\n\n" +
-                                    "Instrumentation (Frida) layers five independent native " +
-                                    "checks - a loaded-library scan, a probe of Frida's default " +
-                                    "port, a thread-name scan, a running-process scan, and a " +
-                                    "timing heuristic - and reports how many actually flagged " +
-                                    "something, since any single layer alone is a weak signal " +
-                                    "that a determined attacker's own anti-detection scripts " +
-                                    "could defeat once they know what to look for. One weak " +
-                                    "signal (often just the timing check) can happen on a " +
-                                    "genuinely clean device; several at once is a real signal.",
+                                text = tr("dialog_integrity_body"),
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp
                             )
@@ -683,6 +659,7 @@ fun SecurityScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+            }
         }
 
         if (showListeningInfoDialog) {
@@ -693,7 +670,7 @@ fun SecurityScreen(
                 },
                 title = {
                     Text(
-                        text = "Listening mode",
+                        text = tr("dialog_listening_mode_title"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -702,9 +679,7 @@ fun SecurityScreen(
                 text = {
                     Column {
                         Text(
-                            text = "When Listening mode is ON, Elene will use your voice input as commands or chat whenever you tap the mic.\n\n" +
-                                    "Pros: hands-free, faster commands.\n" +
-                                    "Drawbacks: anything you say after tapping the mic may trigger actions even if you didn't mean it.",
+                            text = tr("dialog_listening_mode_body"),
                             color = if (isDark) Color.White else Color.Black,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
@@ -716,7 +691,7 @@ fun SecurityScreen(
                         showListeningInfoDialog = false
                         onDismissListeningInfo(false)
                     }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 },
                 dismissButton = {
@@ -724,7 +699,7 @@ fun SecurityScreen(
                         showListeningInfoDialog = false
                         onDismissListeningInfo(true) // never show again
                     }) {
-                        Text("NEVER SHOW AGAIN", color = themeColor.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace)
+                        Text(tr("action_never_show_again"), color = themeColor.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -736,7 +711,7 @@ fun SecurityScreen(
                 onDismissRequest = { showManualArmInfo = false },
                 title = {
                     Text(
-                        text = "Trigger lockdown now",
+                        text = tr("row_trigger_lockdown_now"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -744,11 +719,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Immediately arms Sequence Mode: locks the phone right now (if " +
-                                "OS-level lockdown is enabled) and starts the recovery countdown " +
-                                "toward full-device wipe if that's turned on. Use this if the " +
-                                "phone is lost or stolen. Exiting afterward requires a " +
-                                "fingerprint.",
+                        text = tr("dialog_trigger_lockdown_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -756,7 +727,35 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showManualArmInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+        }
+
+        // ANTI-THEFT MODE disclosure
+        if (showAntiTheftInfo) {
+            AlertDialog(
+                onDismissRequest = { showAntiTheftInfo = false },
+                title = {
+                    Text(
+                        text = tr("row_anti_theft_mode"),
+                        color = themeColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = tr("dialog_anti_theft_body"),
+                        color = if (isDark) Color.White else Color.Black,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAntiTheftInfo = false }) {
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -768,7 +767,7 @@ fun SecurityScreen(
                 onDismissRequest = { showCedalSharedSystemInfo = false },
                 title = {
                     Text(
-                        text = "Cedal Shared System",
+                        text = tr("row_cedal_shared_system"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -776,12 +775,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Cedal Shared System lets this app exchange basic version and " +
-                                "configuration information with other apps you've installed that " +
-                                "are also made by Cedal - verified by matching digital signature, " +
-                                "so no other app can use this channel. It helps keep security " +
-                                "settings consistent across Cedal apps. No personal data is " +
-                                "shared. You can turn this off here at any time.",
+                        text = tr("dialog_cedal_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -789,7 +783,7 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showCedalSharedSystemInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -801,7 +795,7 @@ fun SecurityScreen(
                 onDismissRequest = { showLockdownInfo = false },
                 title = {
                     Text(
-                        text = "OS-level lockdown",
+                        text = tr("row_os_level_lockdown"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -809,12 +803,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Enables the real Android lockscreen for Sequence Mode, not just " +
-                                "this app's PIN, and is required if you also want full-device " +
-                                "wipe. Once enabled, it can't be turned off from inside this app " +
-                                "- only through Android's own Device Admin settings. That's " +
-                                "intentional: if your phone is taken, whoever has it can't just " +
-                                "tap a toggle in here to undo it.",
+                        text = tr("dialog_os_lockdown_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -822,7 +811,7 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showLockdownInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -834,7 +823,7 @@ fun SecurityScreen(
                 onDismissRequest = { showLocationHistoryInfo = false },
                 title = {
                     Text(
-                        text = "Location history",
+                        text = tr("row_location_history"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -842,12 +831,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "When on, this records the device's location roughly every 15 " +
-                                "minutes (using whatever fix the phone already has, not an active " +
-                                "GPS request each time) so you can see where it's been, not just " +
-                                "where it is right now. Stored locally only - view it under " +
-                                "Location history above. Turn off any time; existing entries stay " +
-                                "until you clear them.",
+                        text = tr("dialog_location_history_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -855,7 +839,7 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showLocationHistoryInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -867,7 +851,7 @@ fun SecurityScreen(
                 onDismissRequest = { showFullWipeInfo = false },
                 title = {
                     Text(
-                        text = "Full-device wipe if never recovered",
+                        text = tr("row_full_device_wipe"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -875,13 +859,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "If Sequence Mode is triggered and never recovered (about 30 " +
-                                "days), this app normally only clears its own local data - " +
-                                "locks, hidden/frozen app lists, intruder photos. Turning this ON " +
-                                "instead factory-resets the entire phone at that point, not just " +
-                                "this app. This requires OS-level lockdown to be enabled too, and " +
-                                "cannot be undone once it happens - use it only if you'd rather " +
-                                "lose everything than risk your data.",
+                        text = tr("dialog_full_wipe_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -889,7 +867,35 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showFullWipeInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+        }
+
+        // EVACUATION BACKUP disclosure
+        if (showEvacuationInfo) {
+            AlertDialog(
+                onDismissRequest = { showEvacuationInfo = false },
+                title = {
+                    Text(
+                        text = tr("row_test_evacuation_backup"),
+                        color = themeColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = tr("dialog_evacuation_body"),
+                        color = if (isDark) Color.White else Color.Black,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showEvacuationInfo = false }) {
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -901,7 +907,7 @@ fun SecurityScreen(
                 onDismissRequest = { showKioskInfo = false },
                 title = {
                     Text(
-                        text = "Kiosk mode",
+                        text = tr("row_kiosk_mode"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -909,11 +915,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Pins this app in full-screen using Android's own Screen " +
-                                "Pinning feature - no other app, the notification shade, or " +
-                                "Recents can be reached until it's unpinned with your app PIN. " +
-                                "The first time you turn this on, Android will show its own " +
-                                "one-time confirmation for pinning.",
+                        text = tr("dialog_kiosk_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -921,7 +923,7 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showKioskInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )
@@ -933,7 +935,7 @@ fun SecurityScreen(
                 onDismissRequest = { showLockScreenInfo = false },
                 title = {
                     Text(
-                        text = "Change Android lock screen",
+                        text = tr("row_change_lock_screen"),
                         color = themeColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 16.sp
@@ -941,14 +943,7 @@ fun SecurityScreen(
                 },
                 text = {
                     Text(
-                        text = "Opens Android's own Security settings, where you can change " +
-                                "your lock method to \"Swipe\"/\"None\" if you want this app's " +
-                                "PIN to be the only thing gating the phone. Doing that removes " +
-                                "Android's own secure PIN prompt, but it also weakens the " +
-                                "phone's underlying disk encryption, since that PIN is part of " +
-                                "what protects your data at rest - not just a screen you see. " +
-                                "This app can't make that change for you; only you can, inside " +
-                                "Android's own settings.",
+                        text = tr("dialog_lock_screen_body"),
                         color = if (isDark) Color.White else Color.Black,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
@@ -956,7 +951,7 @@ fun SecurityScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showLockScreenInfo = false }) {
-                        Text("OK", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 }
             )

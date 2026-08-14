@@ -19,7 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-enum class PhoneLinkAgentStatus { IDLE, WAITING_FOR_CONTROLLER, ACTIVE }
+enum class PhoneLinkAgentStatus { IDLE, WAITING_FOR_CONTROLLER, ACTIVE, PAUSED }
 
 /**
  * Setup + live status for this phone being controlled by another (paired) phone. Disclosure
@@ -35,9 +35,12 @@ fun PhoneLinkAgentScreen(
     onAcknowledgeDisclosure: () -> Unit,
     accessibilityEnabled: Boolean,
     onOpenAccessibilitySettings: () -> Unit,
+    batteryUnrestricted: Boolean,
+    onRequestBatteryUnrestricted: () -> Unit,
     token: String,
     status: PhoneLinkAgentStatus,
     onStart: () -> Unit,
+    onResume: () -> Unit,
     onLogOut: () -> Unit
 ) {
     val themeColor = Color(0xFF00E5A0)
@@ -63,8 +66,9 @@ fun PhoneLinkAgentScreen(
         when {
             !disclosureAcknowledged -> DisclosureStep(themeColor, textColor, onAcknowledgeDisclosure)
             !accessibilityEnabled -> AccessibilityStep(themeColor, textColor, onOpenAccessibilitySettings)
+            !batteryUnrestricted -> BatteryStep(themeColor, textColor, onRequestBatteryUnrestricted)
             status == PhoneLinkAgentStatus.IDLE -> PairingStep(themeColor, textColor, token, onStart)
-            else -> LiveStatusStep(themeColor, textColor, token, status, onLogOut)
+            else -> LiveStatusStep(themeColor, textColor, token, status, onResume, onLogOut)
         }
     }
 }
@@ -135,6 +139,37 @@ private fun AccessibilityStep(themeColor: Color, textColor: Color, onOpenSetting
 }
 
 @Composable
+private fun BatteryStep(themeColor: Color, textColor: Color, onRequest: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "One more permission needed",
+            color = textColor,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Without this, Android (especially on some phone brands) can kill this app " +
+                "in the background even while it's actively linked - cutting off the session " +
+                "the moment you swipe this app away or lock the screen. This exempts it from " +
+                "battery optimization so a live session actually stays live.",
+            color = Color.Gray,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            onClick = onRequest,
+            colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("ALLOW BACKGROUND ACTIVITY", color = Color.Black, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
 private fun PairingStep(themeColor: Color, textColor: Color, token: String, onStart: () -> Unit) {
     val qrBitmap = remember(token) { generateQrBitmap(token) }
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -185,17 +220,35 @@ private fun LiveStatusStep(
     textColor: Color,
     token: String,
     status: PhoneLinkAgentStatus,
+    onResume: () -> Unit,
     onLogOut: () -> Unit
 ) {
-    val statusText = if (status == PhoneLinkAgentStatus.ACTIVE) "Connected - linked device can see and control this phone"
-    else "Waiting for the linked device to connect..."
-    val statusColor = if (status == PhoneLinkAgentStatus.ACTIVE) Color(0xFFFF5252) else Color.Gray
+    val statusText = when (status) {
+        PhoneLinkAgentStatus.ACTIVE -> "Connected - linked device can see and control this phone"
+        PhoneLinkAgentStatus.PAUSED -> "Paused - screen was turned off. Check the notification to resume."
+        else -> "Waiting for the linked device to connect..."
+    }
+    val statusColor = when (status) {
+        PhoneLinkAgentStatus.ACTIVE -> Color(0xFFFF5252)
+        PhoneLinkAgentStatus.PAUSED -> Color(0xFFFFA726)
+        else -> Color.Gray
+    }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Text(statusText, color = statusColor, fontSize = 14.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
         Text(text = token, color = Color.Gray, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         Spacer(Modifier.height(24.dp))
+        if (status == PhoneLinkAgentStatus.PAUSED) {
+            Button(
+                onClick = onResume,
+                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("RESUME NOW", color = Color.Black, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(10.dp))
+        }
         Button(
             onClick = onLogOut,
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252).copy(alpha = 0.85f)),

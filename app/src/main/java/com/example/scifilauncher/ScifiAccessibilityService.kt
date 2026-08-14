@@ -1,6 +1,8 @@
 package com.example.scifilauncher
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.accessibilityservice.GestureDescription
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -377,6 +379,18 @@ class ScifiAccessibilityService : AccessibilityService() {
             lastForegroundPkg = pkg
             pendingVisibilityPkg = pkg
 
+            // Real Recents tracking (2026-08-14): counts every real "entered this app" moment,
+            // not just launcher-initiated taps - switching back in via a notification, a link
+            // from another app, or Android's own multitasking all count too, matching what the
+            // user actually meant by "number of time entered". Excludes our own package (opening
+            // this launcher's own screens isn't "opening an app" any more than Android's real
+            // Recents lists the home screen). The thumbnail capture is delayed so the app has
+            // time to actually render before the screenshot is taken.
+            if (pkg != packageName) {
+                RecentAppHistory.recordOpen(this, pkg)
+                bubbleHandler.postDelayed({ captureRecentThumbnail(pkg) }, 700L)
+            }
+
             // The target app relaunched after MediaProjection consent is now actually back in
             // front - safe to request the first frame. Only fires once per pending capture
             // (awaitingCaptureRelaunch is consumed immediately) so later, unrelated window
@@ -395,6 +409,41 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
         bubbleHandler.removeCallbacks(visibilityRunnable)
         bubbleHandler.postDelayed(visibilityRunnable, 450L)
+    }
+
+    /** Real screenshot for the Recents screen's thumbnail (not a fake icon-only preview) - uses
+     * AccessibilityService.takeScreenshot() (API 30+, needs no extra consent dialog since
+     * Accessibility access is already granted). Silently gives up on failure or if the user has
+     * already moved on to a different app by the time this fires - the Recents screen just keeps
+     * showing that app's icon until a future capture succeeds. */
+    private fun captureRecentThumbnail(pkg: String) {
+        if (pkg != lastForegroundPkg) return
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return
+        runCatching {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        runCatching {
+                            val hwBitmap = android.graphics.Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                            val bitmap = hwBitmap?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                            result.hardwareBuffer.close()
+                            if (bitmap != null && bitmap.width > 0) {
+                                val targetWidth = 240
+                                val targetHeight = (targetWidth.toFloat() * bitmap.height / bitmap.width).toInt().coerceAtLeast(1)
+                                val scaled = android.graphics.Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+                                RecentAppHistory.saveThumbnail(this@ScifiAccessibilityService, pkg, scaled)
+                            }
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        // Not fatal - see function doc above.
+                    }
+                }
+            )
+        }
     }
 
     private fun currentThemeColorArgb(): Int {
@@ -626,7 +675,10 @@ class ScifiAccessibilityService : AccessibilityService() {
 
     private fun containsWakeWord(text: String): Boolean {
         val normalized = text.trim().lowercase()
-        return listOf("hey elene", "hey elena", "ok elene", "okay elene", "elene").any { normalized.contains(it) }
+        // "Xenos" is pronounced "Zenos" - Android's speech recognizer transcribes what's SAID
+        // (phonetic), not the intended spelling, so "zenos" variants are the real match target
+        // here, with "xenos" kept as a fallback in case STT ever spells it out literally.
+        return listOf("hey zenos", "hey xenos", "ok zenos", "okay zenos", "zenos", "xenos").any { normalized.contains(it) }
     }
 
     private val wakeWordCheckRunnable = Runnable { runWakeWordCycleIfEligible() }
@@ -651,7 +703,48 @@ class ScifiAccessibilityService : AccessibilityService() {
             scheduleWakeWordCheck()
             return
         }
-        startListening(isWakeWordCheck = true)
+        // Personalized audio-based match (see HeyEleneWakeWord) once the user has recorded their
+        // own "Hey Elene" takes in Settings - never depends on SpeechRecognizer correctly
+        // transcribing the phrase, which is the real reason the plain STT-text-match path below
+        // can miss for some accents. Automatically falls back to the STT path below if nothing's
+        // been recorded (or gets cleared) - no behavior change for anyone who hasn't recorded.
+        if (HeyEleneWakeWord.isEnrolled(this)) {
+            runAudioWakeWordCheck()
+        } else {
+            startListening(isWakeWordCheck = true)
+        }
+    }
+
+    // Mirrors the three guards startListening() itself applies before opening the mic (keyguard/
+    // call/capture-consent) - duplicated here rather than refactoring startListening() to share a
+    // helper, deliberately: that function has been through a lot of hard-won bug fixes (see
+    // experience.md) and each of these three checks is a single, stable one-line condition, low
+    // risk of drifting out of sync.
+    private fun runAudioWakeWordCheck() {
+        val keyguardManager = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguardManager?.isKeyguardLocked == true) {
+            scheduleWakeWordCheck()
+            return
+        }
+        if (isPhoneBusyWithCall(this)) {
+            scheduleWakeWordCheck()
+            return
+        }
+        if (awaitingCaptureConsent) {
+            scheduleWakeWordCheck()
+            return
+        }
+        bubbleServiceScope.launch {
+            val matched = runCatching { HeyEleneWakeWord.checkForWakeWord(this@ScifiAccessibilityService) }
+                .getOrDefault(false)
+            if (matched) {
+                // The wake phrase itself was just consumed - open a REAL turn now, same as a
+                // bubble tap or the STT path's own equivalent branch.
+                startListening(isWakeWordCheck = false)
+            } else {
+                scheduleWakeWordCheck()
+            }
+        }
     }
 
     private fun scheduleWakeWordCheck(delayMillis: Long = 4000L) {
@@ -1058,6 +1151,20 @@ class ScifiAccessibilityService : AccessibilityService() {
                         true
                     }
                 }
+            } else false
+            // Completes directly here rather than bridging to MainActivity - it only needs a
+            // Context (to resolve app names and fire the freeform-launch Intents), no launcher UI
+            // state, same reasoning as force_stop_app above.
+            "multi_control" -> if (arg != null) {
+                val names = arg.split("|").map { it.trim() }.filter { it.isNotEmpty() }.take(3)
+                val resolved = names.mapNotNull { AppResolver.resolvePackageName(this@ScifiAccessibilityService, it) }
+                if (resolved.size < 2) {
+                    speakOut("I could only find ${resolved.size} of those apps installed - multi control needs at least two.")
+                    true
+                } else if (!launchAppsInMultiControl(this@ScifiAccessibilityService, resolved)) {
+                    speakOut("Negative. Couldn't open those apps in multi control.")
+                    true
+                } else true
             } else false
             "volume" -> if (arg != null) {
                 val am = getSystemService(AUDIO_SERVICE) as? android.media.AudioManager

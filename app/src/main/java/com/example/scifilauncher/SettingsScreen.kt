@@ -1,7 +1,9 @@
 package com.example.scifilauncher
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,6 +11,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -22,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -31,7 +37,6 @@ fun SettingsScreen(
     currentThemeIndex: Int,
     onThemeChange: (Int) -> Unit,
     onBackToDashboard: () -> Unit,
-    onFeedback: () -> Unit,
     onMakeDefaultLauncher: () -> Unit,
     onPrivacyPolicy: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -39,11 +44,18 @@ fun SettingsScreen(
     onOpenCapabilities: () -> Unit,
     onOpenMemory: () -> Unit,
     onRequestBiometricForWifiPassword: (onSuccess: () -> Unit) -> Unit,
-    onDarkModeChange: (DarkModeOption) -> Unit = {}
+    onDarkModeChange: (DarkModeOption) -> Unit = {},
+    currentIconPackPkg: String? = null,
+    onSelectIconPack: (String?) -> Unit = {},
+    onLanguageChange: (LanguageOption) -> Unit = {}
 ) {
     val context = LocalContext.current
 
     var showThemePanel by remember { mutableStateOf(false) }
+    var showIconPackPanel by remember { mutableStateOf(false) }
+    var showFeedbackDialog by remember { mutableStateOf(false) }
+    var showBackendUrlDialog by remember { mutableStateOf(false) }
+    var backendUrlConfigured by remember { mutableStateOf(EleneApiClient.currentBaseUrl().isNotBlank()) }
 
     val timePrefs = remember {
         context.getSharedPreferences("time_prefs", Context.MODE_PRIVATE)
@@ -63,6 +75,16 @@ fun SettingsScreen(
     var showContinuousListeningInfo by remember { mutableStateOf(false) }
     var alwaysListeningOn by remember { mutableStateOf(themePrefs.getBoolean("elene_always_listening", false)) }
     var showAlwaysListeningInfo by remember { mutableStateOf(false) }
+    val heyEleneScope = rememberCoroutineScope()
+    var heyEleneEnrolled by remember { mutableStateOf(HeyEleneWakeWord.isEnrolled(context)) }
+    var heyEleneBusy by remember { mutableStateOf(false) }
+    var heyEleneStatus by remember { mutableStateOf<String?>(null) }
+    var showHeyEleneRecordInfo by remember { mutableStateOf(false) }
+    var heyEleneShowRecordingDialog by remember { mutableStateOf(false) }
+    var heyEleneTakesDone by remember { mutableIntStateOf(0) }
+    var heyEleneDialogProcessing by remember { mutableStateOf(false) }
+    var heyEleneCancelled by remember { mutableStateOf(false) }
+    val heyEleneDesiredTakes = 5
 
 
     var showTimeFormatPanel by remember { mutableStateOf(false) }
@@ -84,7 +106,10 @@ fun SettingsScreen(
         modifier = modifier.fillMaxSize()
     ) {
         PanelBackdrop(isDark = darkModeOption == DarkModeOption.DARK)
-        androidx.compose.runtime.CompositionLocalProvider(LocalPanelIsDark provides (darkModeOption == DarkModeOption.DARK)) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalPanelIsDark provides (darkModeOption == DarkModeOption.DARK),
+            LocalLanguage provides languageOption
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -105,7 +130,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "< DASH",
+                    text = tr("back_dash"),
                     color = themeColor,
                     fontSize = baseFontSize,
                     fontFamily = FontFamily.Monospace,
@@ -115,7 +140,7 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Text(
-                    text = "SETTINGS",
+                    text = tr("settings_title"),
                     color = themeColor,
                     fontSize = headerFontSize,
                     fontFamily = FontFamily.Monospace
@@ -130,43 +155,52 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.Start
             ) {
-                PanelSection(title = "APPEARANCE", themeColor = themeColor) {
+                PanelSection(title = tr("section_appearance"), themeColor = themeColor) {
                     PanelRow(
-                        label = "Theme",
+                        label = tr("row_theme"),
                         themeColor = themeColor,
                         value = CedalThemes[currentThemeIndex].name,
                         onClick = { showThemePanel = true }
                     )
                     PanelRow(
-                        label = "Font size",
+                        label = tr("row_font_size"),
                         themeColor = themeColor,
                         value = when (fontSizeOption) {
-                            FontSizeOption.SMALL -> "Small"
-                            FontSizeOption.NORMAL -> "Normal"
-                            FontSizeOption.LARGE -> "Large"
-                            FontSizeOption.HUGE -> "Huge"
+                            FontSizeOption.SMALL -> tr("font_small")
+                            FontSizeOption.NORMAL -> tr("font_normal")
+                            FontSizeOption.LARGE -> tr("font_large")
+                            FontSizeOption.HUGE -> tr("font_huge")
                         },
-                        showDivider = false,
                         onClick = { showFontSizePanel = true }
+                    )
+                    PanelRow(
+                        label = tr("row_icon_pack"),
+                        themeColor = themeColor,
+                        value = currentIconPackPkg?.let { pkg ->
+                            runCatching { context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(pkg, 0)).toString() }
+                                .getOrDefault(tr("font_normal"))
+                        } ?: tr("font_normal"),
+                        showDivider = false,
+                        onClick = { showIconPackPanel = true }
                     )
                 }
 
-                PanelSection(title = "NETWORK", themeColor = themeColor) {
+                PanelSection(title = tr("section_network"), themeColor = themeColor) {
                     var wifiStatus by remember { mutableStateOf(currentWifiStatus(context)) }
                     var revealedPassword by remember { mutableStateOf<String?>(null) }
                     var revealFailReason by remember { mutableStateOf<String?>(null) }
                     var showWifiInfo by remember { mutableStateOf(false) }
 
                     PanelRow(
-                        label = "Wi-Fi",
+                        label = tr("row_wifi"),
                         themeColor = themeColor,
-                        value = wifiStatus.ssid ?: "Not connected",
+                        value = wifiStatus.ssid ?: tr("wifi_not_connected"),
                         onInfoClick = { showWifiInfo = true },
                         onClick = { wifiStatus = currentWifiStatus(context) }
                     )
                     if (wifiStatus.connected) {
                         PanelRow(
-                            label = "Signal / speed",
+                            label = tr("row_signal_speed"),
                             themeColor = themeColor,
                             value = listOfNotNull(
                                 wifiStatus.rssiDbm?.let { "${it}dBm" },
@@ -175,18 +209,18 @@ fun SettingsScreen(
                             onClick = {}
                         )
                         PanelRow(
-                            label = "IP address",
+                            label = tr("row_ip_address"),
                             themeColor = themeColor,
                             value = wifiStatus.ipAddress ?: "-",
                             onClick = {}
                         )
                         PanelRow(
-                            label = "Reveal password",
+                            label = tr("row_reveal_password"),
                             themeColor = themeColor,
                             value = when {
                                 revealedPassword != null -> revealedPassword!!
-                                revealFailReason != null -> "Unavailable"
-                                else -> "Tap to reveal"
+                                revealFailReason != null -> tr("value_unavailable")
+                                else -> tr("value_tap_to_reveal")
                             },
                             showDivider = false,
                             onClick = {
@@ -220,18 +254,13 @@ fun SettingsScreen(
                             onDismissRequest = { showWifiInfo = false },
                             confirmButton = {
                                 TextButton(onClick = { showWifiInfo = false }) {
-                                    Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                                    Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                                 }
                             },
-                            title = { Text("Wi-Fi", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                            title = { Text(tr("wifi_dialog_title"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                             text = {
                                 Text(
-                                    "Shows the currently connected network. \"Reveal password\" reads " +
-                                        "the saved password for that network from Android's own Wi-Fi " +
-                                        "config store - only possible because this app is enrolled as " +
-                                        "this device's Device Owner, which keeps access ordinary apps " +
-                                        "lost in Android 10+. Needs your fingerprint first, and only " +
-                                        "works for networks actually saved on this device.",
+                                    tr("wifi_dialog_body"),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 13.sp
                                 )
@@ -240,15 +269,15 @@ fun SettingsScreen(
                     }
                 }
 
-                PanelSection(title = "SYSTEM & BEHAVIOR", themeColor = themeColor) {
+                PanelSection(title = tr("section_system_behavior"), themeColor = themeColor) {
                     PanelRow(
-                        label = "Time format",
+                        label = tr("row_time_format"),
                         themeColor = themeColor,
-                        value = if (timeFormat == TimeFormatOption.FORMAT_24H) "24-hour" else "12-hour",
+                        value = if (timeFormat == TimeFormatOption.FORMAT_24H) tr("time_24h") else tr("time_12h"),
                         onClick = { showTimeFormatPanel = true }
                     )
                     PanelToggleRow(
-                        label = "Battery saver",
+                        label = tr("row_battery_saver"),
                         themeColor = themeColor,
                         checked = batteryMode != BatterySaverMode.OFF,
                         onToggle = { on ->
@@ -257,31 +286,31 @@ fun SettingsScreen(
                         }
                     )
                     PanelRow(
-                        label = "Language",
+                        label = tr("row_language"),
                         themeColor = themeColor,
                         value = when (languageOption) {
-                            LanguageOption.ENGLISH -> "English"
-                            LanguageOption.YORUBA -> "Yoruba"
-                            LanguageOption.MANDARIN -> "Mandarin"
-                            LanguageOption.KOREAN -> "Korean"
-                            LanguageOption.FRENCH -> "French"
-                            LanguageOption.SPANISH -> "Spanish"
-                            LanguageOption.GERMAN -> "German"
+                            LanguageOption.ENGLISH -> tr("lang_english")
+                            LanguageOption.YORUBA -> tr("lang_yoruba")
+                            LanguageOption.MANDARIN -> tr("lang_mandarin")
+                            LanguageOption.KOREAN -> tr("lang_korean")
+                            LanguageOption.FRENCH -> tr("lang_french")
+                            LanguageOption.SPANISH -> tr("lang_spanish")
+                            LanguageOption.GERMAN -> tr("lang_german")
                         },
                         onClick = { showLanguagePanel = true }
                     )
                     PanelRow(
-                        label = "Keyboard",
+                        label = tr("row_keyboard"),
                         themeColor = themeColor,
                         value = when (keyboardStyle) {
-                            KeyboardStyle.NORMAL -> "Normal"
-                            KeyboardStyle.XENOS -> "Xenos"
-                            KeyboardStyle.CEDAL -> "Cedal"
+                            KeyboardStyle.NORMAL -> tr("keyboard_normal")
+                            KeyboardStyle.XENOS -> tr("keyboard_xenos")
+                            KeyboardStyle.CEDAL -> tr("keyboard_cedal")
                         },
                         onClick = { showKeyboardPanel = true }
                     )
                     PanelToggleRow(
-                        label = "Elene voice",
+                        label = tr("row_xenos_voice"),
                         themeColor = themeColor,
                         checked = eleneVoiceOn,
                         onToggle = {
@@ -290,7 +319,7 @@ fun SettingsScreen(
                         }
                     )
                     PanelToggleRow(
-                        label = "Elene keeps listening",
+                        label = tr("row_xenos_keeps_listening"),
                         themeColor = themeColor,
                         checked = continuousListeningOn,
                         onToggle = {
@@ -300,42 +329,106 @@ fun SettingsScreen(
                         onInfoClick = { showContinuousListeningInfo = true }
                     )
                     PanelToggleRow(
-                        label = "Always listening (\"Hey Elene\")",
+                        label = tr("row_always_listening"),
                         themeColor = themeColor,
                         checked = alwaysListeningOn,
-                        showDivider = false,
                         onToggle = {
                             alwaysListeningOn = it
                             themePrefs.edit().putBoolean("elene_always_listening", alwaysListeningOn).apply()
                         },
                         onInfoClick = { showAlwaysListeningInfo = true }
                     )
+                    PanelRow(
+                        label = if (heyEleneEnrolled) tr("row_rerecord_hey_xenos") else tr("row_record_hey_xenos"),
+                        themeColor = themeColor,
+                        value = heyEleneStatus ?: if (heyEleneEnrolled) {
+                            tr("hey_xenos_enrolled", HeyEleneWakeWord.sampleCount(context).toString())
+                        } else {
+                            tr("hey_xenos_not_recorded")
+                        },
+                        showDivider = false,
+                        onInfoClick = { showHeyEleneRecordInfo = true },
+                        onClick = {
+                            if (heyEleneBusy) return@PanelRow
+                            heyEleneBusy = true
+                            heyEleneStatus = null
+                            heyEleneCancelled = false
+                            heyEleneTakesDone = 0
+                            heyEleneShowRecordingDialog = true
+                            heyEleneScope.launch {
+                                val desiredTakes = 5
+                                val maxAttempts = 8
+                                val samples = mutableListOf<FloatArray>()
+                                var attempt = 0
+                                while (samples.size < desiredTakes && attempt < maxAttempts && !heyEleneCancelled) {
+                                    attempt++
+                                    val sample = recordVoiceSample(context, WAKE_WORD_CAPTURE_SAMPLES)
+                                    if (sample != null) {
+                                        samples.add(sample)
+                                        heyEleneTakesDone = samples.size
+                                    }
+                                }
+                                if (heyEleneCancelled) {
+                                    heyEleneShowRecordingDialog = false
+                                    heyEleneBusy = false
+                                    return@launch
+                                }
+                                if (samples.size < 3) {
+                                    heyEleneShowRecordingDialog = false
+                                    heyEleneStatus = uiString("hey_xenos_couldnt_record", languageOption)
+                                    heyEleneBusy = false
+                                    return@launch
+                                }
+                                heyEleneDialogProcessing = true
+                                val ok = HeyEleneWakeWord.enroll(context, samples)
+                                heyEleneEnrolled = HeyEleneWakeWord.isEnrolled(context)
+                                heyEleneShowRecordingDialog = false
+                                heyEleneDialogProcessing = false
+                                heyEleneStatus = if (ok) {
+                                    uiString("hey_xenos_recorded_ok", languageOption, samples.size.toString())
+                                } else {
+                                    uiString("hey_xenos_recording_failed", languageOption)
+                                }
+                                heyEleneBusy = false
+                            }
+                        }
+                    )
                 }
 
-                PanelSection(title = "CAPABILITIES", themeColor = themeColor) {
+                PanelSection(title = tr("section_capabilities"), themeColor = themeColor) {
                     PanelRow(
-                        label = "What this app can do",
+                        label = tr("row_what_app_can_do"),
                         themeColor = themeColor,
                         showDivider = false,
                         onClick = onOpenCapabilities
                     )
                 }
 
-                PanelSection(title = "MEMORY", themeColor = themeColor) {
+                PanelSection(title = tr("section_memory"), themeColor = themeColor) {
                     PanelRow(
-                        label = "What Elene remembers",
+                        label = tr("row_what_xenos_remembers"),
                         themeColor = themeColor,
                         showDivider = false,
                         onClick = onOpenMemory
                     )
                 }
 
-                PanelSection(title = "ABOUT & SUPPORT", themeColor = themeColor) {
-                    PanelRow(label = "Feedback", themeColor = themeColor, onClick = onFeedback)
-                    PanelRow(label = "Privacy policy", themeColor = themeColor, onClick = onPrivacyPolicy)
-                    PanelRow(label = "Make default launcher", themeColor = themeColor, onClick = onMakeDefaultLauncher)
-                    PanelRow(label = "About", themeColor = themeColor, onClick = onOpenAbout)
-                    PanelRow(label = "More apps", themeColor = themeColor, showDivider = false, onClick = onOpenMoreApps)
+                PanelSection(title = tr("section_elene_backend"), themeColor = themeColor) {
+                    PanelRow(
+                        label = tr("row_backend_url"),
+                        themeColor = themeColor,
+                        value = if (backendUrlConfigured) tr("backend_url_configured") else tr("backend_url_not_configured"),
+                        showDivider = false,
+                        onClick = { showBackendUrlDialog = true }
+                    )
+                }
+
+                PanelSection(title = tr("section_about_support"), themeColor = themeColor) {
+                    PanelRow(label = tr("row_feedback"), themeColor = themeColor, onClick = { showFeedbackDialog = true })
+                    PanelRow(label = tr("row_privacy_policy"), themeColor = themeColor, onClick = onPrivacyPolicy)
+                    PanelRow(label = tr("row_make_default_launcher"), themeColor = themeColor, onClick = onMakeDefaultLauncher)
+                    PanelRow(label = tr("row_about"), themeColor = themeColor, onClick = onOpenAbout)
+                    PanelRow(label = tr("row_more_apps"), themeColor = themeColor, showDivider = false, onClick = onOpenMoreApps)
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -362,23 +455,43 @@ fun SettingsScreen(
             )
         }
 
+        if (showIconPackPanel) {
+            IconPackPanel(
+                themeColor = themeColor,
+                currentPackPkg = currentIconPackPkg,
+                onSelectPack = onSelectIconPack,
+                onDismiss = { showIconPackPanel = false }
+            )
+        }
+
+        if (showBackendUrlDialog) {
+            BackendUrlDialog(
+                themeColor = themeColor,
+                onDismiss = { showBackendUrlDialog = false },
+                onSaved = { backendUrlConfigured = EleneApiClient.currentBaseUrl().isNotBlank() }
+            )
+        }
+
+        if (showFeedbackDialog) {
+            FeedbackDialog(
+                themeColor = themeColor,
+                onDismiss = { showFeedbackDialog = false }
+            )
+        }
+
 
         if (showContinuousListeningInfo) {
             AlertDialog(
                 onDismissRequest = { showContinuousListeningInfo = false },
                 confirmButton = {
                     TextButton(onClick = { showContinuousListeningInfo = false }) {
-                        Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 },
-                title = { Text("Elene keeps listening", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                title = { Text(tr("dialog_keeps_listening_title"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
-                        "On: after replying, Elene keeps the mic open and waits for your next " +
-                            "thing - she only stops when you say \"stop listening\" (or a clear " +
-                            "equivalent like \"go away\").\n\n" +
-                            "Off: she stops listening automatically after every single reply, " +
-                            "the same as before - you'll need to tap the bubble again each time.",
+                        tr("dialog_keeps_listening_body"),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp
                     )
@@ -391,25 +504,78 @@ fun SettingsScreen(
                 onDismissRequest = { showAlwaysListeningInfo = false },
                 confirmButton = {
                     TextButton(onClick = { showAlwaysListeningInfo = false }) {
-                        Text("CLOSE", color = themeColor, fontFamily = FontFamily.Monospace)
+                        Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
                     }
                 },
-                title = { Text("Always listening (\"Hey Elene\")", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                title = { Text(tr("dialog_always_listening_title"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
-                        "On: Elene periodically listens for \"Hey Elene\" even when you haven't " +
-                            "tapped the bubble, and starts a real listening turn the moment she " +
-                            "hears it - you can still tap the bubble any time too, this doesn't " +
-                            "replace that.\n\n" +
-                            "Honest limitation: Android has no dedicated low-power wake-word " +
-                            "engine exposed to apps, so this works by running real short " +
-                            "listening sessions every few seconds - it costs real battery, more " +
-                            "than \"Elene keeps listening\" above. Automatically turns off " +
-                            "whenever battery saver is on, and resumes on its own once it's off " +
-                            "again.",
+                        tr("dialog_always_listening_body"),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp
                     )
+                }
+            )
+        }
+
+        if (showHeyEleneRecordInfo) {
+            AlertDialog(
+                onDismissRequest = { showHeyEleneRecordInfo = false },
+                confirmButton = {
+                    TextButton(onClick = { showHeyEleneRecordInfo = false }) {
+                        Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                },
+                title = { Text(tr("dialog_record_hey_xenos_title"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        tr("dialog_record_hey_xenos_body"),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp
+                    )
+                }
+            )
+        }
+
+        if (heyEleneShowRecordingDialog) {
+            AlertDialog(
+                onDismissRequest = { /* modal while recording - use Cancel below */ },
+                dismissButton = {
+                    if (!heyEleneDialogProcessing) {
+                        TextButton(onClick = { heyEleneCancelled = true }) {
+                            Text(tr("action_cancel"), color = Color.Gray, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                },
+                confirmButton = {},
+                title = {
+                    Text(
+                        tr("hey_xenos_dialog_title"),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 22.sp,
+                        color = themeColor
+                    )
+                },
+                text = {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            if (heyEleneDialogProcessing) tr("hey_xenos_processing") else tr("hey_xenos_say_it_now"),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 16.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            if (heyEleneDialogProcessing) "" else tr(
+                                "hey_xenos_take_of",
+                                (heyEleneTakesDone + 1).coerceAtMost(heyEleneDesiredTakes).toString(),
+                                heyEleneDesiredTakes.toString()
+                            ),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            color = Color.Gray
+                        )
+                    }
                 }
             )
         }
@@ -456,6 +622,7 @@ fun SettingsScreen(
                 onSelect = { chosen ->
                     languageOption = chosen
                     saveLanguage(themePrefs, chosen)
+                    onLanguageChange(chosen)
                     showLanguagePanel = false
                 },
                 onDismiss = { showLanguagePanel = false }
@@ -533,38 +700,38 @@ private fun LanguagePanel(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "LANGUAGE",
+                    text = tr("panel_language_title"),
                     color = themeColor,
                     fontSize = titleFontSize,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                LanguageRow("English", current == LanguageOption.ENGLISH, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_english"), current == LanguageOption.ENGLISH, themeColor, rowFontSize) {
                     onSelect(LanguageOption.ENGLISH)
                 }
-                LanguageRow("Yoruba", current == LanguageOption.YORUBA, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_yoruba"), current == LanguageOption.YORUBA, themeColor, rowFontSize) {
                     onSelect(LanguageOption.YORUBA)
                 }
-                LanguageRow("Mandarin", current == LanguageOption.MANDARIN, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_mandarin"), current == LanguageOption.MANDARIN, themeColor, rowFontSize) {
                     onSelect(LanguageOption.MANDARIN)
                 }
-                LanguageRow("Korean", current == LanguageOption.KOREAN, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_korean"), current == LanguageOption.KOREAN, themeColor, rowFontSize) {
                     onSelect(LanguageOption.KOREAN)
                 }
-                LanguageRow("French", current == LanguageOption.FRENCH, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_french"), current == LanguageOption.FRENCH, themeColor, rowFontSize) {
                     onSelect(LanguageOption.FRENCH)
                 }
-                LanguageRow("Spanish", current == LanguageOption.SPANISH, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_spanish"), current == LanguageOption.SPANISH, themeColor, rowFontSize) {
                     onSelect(LanguageOption.SPANISH)
                 }
-                LanguageRow("German", current == LanguageOption.GERMAN, themeColor, rowFontSize) {
+                LanguageRow(tr("lang_german"), current == LanguageOption.GERMAN, themeColor, rowFontSize) {
                     onSelect(LanguageOption.GERMAN)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Tap outside to cancel.",
+                    text = tr("tap_outside_to_cancel"),
                     color = Color.Gray,
                     fontSize = hintFontSize,
                     fontFamily = FontFamily.Monospace
@@ -597,7 +764,7 @@ private fun LanguageRow(
             fontFamily = FontFamily.Monospace
         )
         Text(
-            text = if (selected) "SELECTED" else "",
+            text = if (selected) tr("value_selected") else "",
             color = if (selected) themeColor else Color.Transparent,
             fontSize = (fontSize.value - 4).coerceAtLeast(8f).sp,
             fontFamily = FontFamily.Monospace
@@ -636,7 +803,7 @@ private fun TimeFormatPanel(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "TIME FORMAT",
+                    text = tr("panel_time_format_title"),
                     color = themeColor,
                     fontSize = titleFontSize,
                     fontFamily = FontFamily.Monospace,
@@ -644,7 +811,7 @@ private fun TimeFormatPanel(
                 )
 
                 TimeFormatOptionRow(
-                    label = "12-hour (AM/PM)",
+                    label = tr("time_12h_ampm"),
                     selected = current == TimeFormatOption.FORMAT_12H,
                     themeColor = themeColor,
                     fontSize = rowFontSize,
@@ -652,7 +819,7 @@ private fun TimeFormatPanel(
                 )
 
                 TimeFormatOptionRow(
-                    label = "24-hour",
+                    label = tr("time_24h"),
                     selected = current == TimeFormatOption.FORMAT_24H,
                     themeColor = themeColor,
                     fontSize = rowFontSize,
@@ -662,7 +829,7 @@ private fun TimeFormatPanel(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Tap outside to cancel.",
+                    text = tr("tap_outside_to_cancel"),
                     color = Color.Gray,
                     fontSize = hintFontSize,
                     fontFamily = FontFamily.Monospace
@@ -695,7 +862,7 @@ private fun TimeFormatOptionRow(
             fontFamily = FontFamily.Monospace
         )
         Text(
-            text = if (selected) "SELECTED" else "",
+            text = if (selected) tr("value_selected") else "",
             color = if (selected) themeColor else Color.Transparent,
             fontSize = (fontSize.value - 4).coerceAtLeast(8f).sp,
             fontFamily = FontFamily.Monospace
@@ -734,29 +901,29 @@ private fun FontSizePanel(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "FONT SIZE",
+                    text = tr("panel_font_size_title"),
                     color = themeColor,
                     fontSize = titleFontSize,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                FontSizeRow("Small", current == FontSizeOption.SMALL, themeColor, rowFontSize) {
+                FontSizeRow(tr("font_small"), current == FontSizeOption.SMALL, themeColor, rowFontSize) {
                     onSelect(FontSizeOption.SMALL)
                 }
-                FontSizeRow("Normal", current == FontSizeOption.NORMAL, themeColor, rowFontSize) {
+                FontSizeRow(tr("font_normal"), current == FontSizeOption.NORMAL, themeColor, rowFontSize) {
                     onSelect(FontSizeOption.NORMAL)
                 }
-                FontSizeRow("Large", current == FontSizeOption.LARGE, themeColor, rowFontSize) {
+                FontSizeRow(tr("font_large"), current == FontSizeOption.LARGE, themeColor, rowFontSize) {
                     onSelect(FontSizeOption.LARGE)
                 }
-                FontSizeRow("Huge", current == FontSizeOption.HUGE, themeColor, rowFontSize) {
+                FontSizeRow(tr("font_huge"), current == FontSizeOption.HUGE, themeColor, rowFontSize) {
                     onSelect(FontSizeOption.HUGE)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Tap outside to cancel.",
+                    text = tr("tap_outside_to_cancel"),
                     color = Color.Gray,
                     fontSize = hintFontSize,
                     fontFamily = FontFamily.Monospace
@@ -790,7 +957,7 @@ private fun FontSizeRow(
             fontFamily = FontFamily.Monospace
         )
         Text(
-            text = if (selected) "SELECTED" else "",
+            text = if (selected) tr("value_selected") else "",
             color = if (selected) themeColor else Color.Transparent,
             fontSize = (fontSize.value - 4).coerceAtLeast(8f).sp,
             fontFamily = FontFamily.Monospace
@@ -830,27 +997,27 @@ private fun KeyboardPanel(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "KEYBOARD STYLE",
+                    text = tr("panel_keyboard_title"),
                     color = themeColor,
                     fontSize = titleFontSize,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
 
-                KeyboardRow("Normal", current == KeyboardStyle.NORMAL, themeColor, rowFontSize) {
+                KeyboardRow(tr("keyboard_normal"), current == KeyboardStyle.NORMAL, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.NORMAL)
                     // Normal = system default keyboard, just close panel
                     onDismiss()
                 }
 
-                KeyboardRow("Xenos (matrix)", current == KeyboardStyle.XENOS, themeColor, rowFontSize) {
+                KeyboardRow(tr("keyboard_xenos_matrix"), current == KeyboardStyle.XENOS, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.XENOS)
                     // Ask system to show picker so user selects XenosKeyboardService
                     showInputMethodPicker(context)
                     onDismiss()
                 }
 
-                KeyboardRow("Cedal", current == KeyboardStyle.CEDAL, themeColor, rowFontSize) {
+                KeyboardRow(tr("keyboard_cedal"), current == KeyboardStyle.CEDAL, themeColor, rowFontSize) {
                     onSelect(KeyboardStyle.CEDAL)
                     // Ask system to show picker so user selects CedalKeyboardService
                     showInputMethodPicker(context)
@@ -859,7 +1026,7 @@ private fun KeyboardPanel(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "After choosing, select the keyboard in the system picker.",
+                    text = tr("keyboard_picker_hint"),
                     color = Color.Gray,
                     fontSize = hintFontSize,
                     fontFamily = FontFamily.Monospace
@@ -892,11 +1059,201 @@ private fun KeyboardRow(
             fontFamily = FontFamily.Monospace
         )
         Text(
-            text = if (selected) "SELECTED" else "",
+            text = if (selected) tr("value_selected") else "",
             color = if (selected) themeColor else Color.Transparent,
             fontSize = (fontSize.value - 4).coerceAtLeast(8f).sp,
             fontFamily = FontFamily.Monospace
         )
+    }
+}
+
+/** Open source means no shared backend - each install needs its own deployment (see
+ * backend/elene/.env.example), and this is the friendliest way to point at it: no rebuild, no
+ * touching local.properties, just paste the URL. Saved via EleneApiClient.setBaseUrl(), which
+ * both persists it (theme_prefs) and updates the live in-memory value immediately. */
+@Composable
+private fun BackendUrlDialog(
+    themeColor: Color,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val context = LocalContext.current
+    var url by remember { mutableStateOf(EleneApiClient.currentBaseUrl()) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .clickable(enabled = false) {},
+            color = Color(0xFF05070B),
+            tonalElevation = 8.dp,
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = tr("backend_url_dialog_title"),
+                    color = themeColor,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                Text(
+                    text = tr("backend_url_help"),
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text(tr("backend_url_hint"), fontFamily = FontFamily.Monospace) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = tr("action_cancel"),
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.clickable { onDismiss() }
+                    )
+                    Button(
+                        onClick = {
+                            EleneApiClient.setBaseUrl(context, url)
+                            onSaved()
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = themeColor)
+                    ) {
+                        Text(
+                            tr("action_save"),
+                            color = Color.Black,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val FEEDBACK_RECIPIENT = "hackerxenos06@gmail.com"
+
+/** In-app feedback: types a message (+ optionally their own Gmail so a reply is possible), SEND
+ * opens the phone's own mail app with the recipient/subject/body pre-filled - it sends through
+ * their own already-logged-in mail account with one more tap there, no backend/credentials
+ * needed on this end at all. */
+@Composable
+private fun FeedbackDialog(
+    themeColor: Color,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var message by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .clickable(enabled = false) {}, // absorb taps so they don't fall through to dismiss
+            color = Color(0xFF05070B),
+            tonalElevation = 8.dp,
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = tr("row_feedback"),
+                    color = themeColor,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    label = { Text(tr("feedback_message_hint"), fontFamily = FontFamily.Monospace) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text(tr("feedback_email_hint"), fontFamily = FontFamily.Monospace) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = tr("action_cancel"),
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.clickable { onDismiss() }
+                    )
+                    Button(
+                        onClick = {
+                            if (message.isBlank()) return@Button
+                            val bodyText = if (email.isNotBlank()) "$message\n\n-- from: $email" else message
+                            val intent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = Uri.parse("mailto:$FEEDBACK_RECIPIENT")
+                                putExtra(Intent.EXTRA_SUBJECT, "SciFiLauncher Feedback")
+                                putExtra(Intent.EXTRA_TEXT, bodyText)
+                            }
+                            runCatching { context.startActivity(intent) }
+                            onDismiss()
+                        },
+                        enabled = message.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = themeColor)
+                    ) {
+                        Text(
+                            tr("action_send"),
+                            color = Color.Black,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

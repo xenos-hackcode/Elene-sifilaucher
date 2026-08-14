@@ -120,8 +120,19 @@ class ScreenCaptureService : Service() {
             // under us (user taps the system's own screen-capture status-bar chip).
             projection.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
-                    // mediaProjection.stop() inside teardown() re-triggers this same callback
-                    // re-entrantly - teardown() below is idempotent specifically to survive that.
+                    // Android itself revokes the projection when the screen turns off (a real,
+                    // deliberate platform privacy boundary - confirmed live 2026-08-10, not
+                    // something any in-app fix can prevent). Real, separate crash also found
+                    // live: an earlier version of this tried to keep THIS service alive in a
+                    // "paused" foreground state with an updated notification - but Android
+                    // refuses startForeground() re-affirming the mediaProjection type without an
+                    // actively valid projection backing it (a SecurityException, by design - the
+                    // same class of platform enforcement as the onStop() behavior itself, not a
+                    // bug to route around). So this service just fully tears down on projection
+                    // loss like any other stop; PhoneLinkAccessibilityService (not tied to any
+                    // foreground-service-type restriction) owns the "paused, tap to resume"
+                    // notification and the wake lock across the pause, since those don't depend
+                    // on this specific service instance surviving.
                     runCatching { sendBroadcast(Intent(ACTION_PROJECTION_STOPPED).setPackage(packageName)) }
                     teardown()
                 }
@@ -254,5 +265,10 @@ class ScreenCaptureService : Service() {
         const val ACTION_FRAME_READY = "com.example.phonelinkagent.FRAME_READY"
         const val ACTION_FRAME_ERROR = "com.example.phonelinkagent.FRAME_ERROR"
         const val ACTION_PROJECTION_STOPPED = "com.example.phonelinkagent.PROJECTION_STOPPED"
+
+        // Fired by the paused notification's STOP action - a real, explicit way to end the
+        // whole session (not just capture), listened for by PhoneLinkAccessibilityService's own
+        // receiver so it can disconnect the websocket too, not just this service.
+        const val ACTION_STOP_SESSION_REQUESTED = "com.example.phonelinkagent.STOP_SESSION_REQUESTED"
     }
 }

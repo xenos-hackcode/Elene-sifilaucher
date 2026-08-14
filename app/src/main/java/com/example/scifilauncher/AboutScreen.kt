@@ -71,7 +71,7 @@ fun AboutScreen(
                 modifier = Modifier.padding(bottom = 4.dp)
             )
             Text(
-                text = "A custom Android home-screen launcher built around Elene, an on-device " +
+                text = "A custom Android home-screen launcher built around Xenos, an on-device " +
                         "voice-first AI assistant. Below is a full, honest list of what the app " +
                         "can currently do.",
                 color = Color.White,

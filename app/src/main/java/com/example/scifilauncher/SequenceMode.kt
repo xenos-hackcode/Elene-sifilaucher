@@ -28,6 +28,11 @@ private const val KEY_LAST_LOCATION_LAT = "last_location_lat"
 private const val KEY_LAST_LOCATION_LNG = "last_location_lng"
 private const val KEY_LAST_LOCATION_AT = "last_location_at"
 private const val KEY_FULL_WIPE_ENABLED = "sequence_mode_full_wipe_enabled"
+// Anti-theft mode: whether Elene proactively alerts on sudden motion ("are you running?",
+// the "Are you OK?" notification, and the 10-min confirm-or-arm countdown). Defaults ON.
+// Turning it off only silences those motion alerts - manual lockdown, failed-fingerprint
+// auto-arm, location tracking, and wipe all still work.
+const val KEY_ANTI_THEFT_MODE_ENABLED = "anti_theft_mode_enabled"
 
 // Auto-arm trigger #1: repeated failed fingerprint scans on device-action confirmations
 // (see IntruderCaptureLog) - a direct, real "someone who isn't the owner is trying to use this
@@ -81,6 +86,15 @@ data class FamilyContact(val label: String, val displayName: String, val phoneNu
 
 fun isSequenceModeActive(prefs: SharedPreferences): Boolean =
     prefs.getBoolean(KEY_SEQUENCE_MODE_ACTIVE, false)
+
+/** Whether Elene proactively alerts on sudden motion (the "are you running?" speak, the
+ * "Are you OK?" notification, and the 10-min confirm-or-arm countdown). Defaults ON. */
+fun isAntiTheftModeEnabled(prefs: SharedPreferences): Boolean =
+    prefs.getBoolean(KEY_ANTI_THEFT_MODE_ENABLED, true)
+
+fun setAntiTheftModeEnabled(prefs: SharedPreferences, enabled: Boolean) {
+    prefs.edit().putBoolean(KEY_ANTI_THEFT_MODE_ENABLED, enabled).apply()
+}
 
 fun sequenceModeStartedAt(prefs: SharedPreferences): Long =
     prefs.getLong(KEY_SEQUENCE_MODE_STARTED_AT, System.currentTimeMillis())
@@ -328,12 +342,21 @@ fun exitSequenceMode(context: Context, lockPrefs: SharedPreferences) {
 }
 
 /** Called only if Sequence Mode is still active ~30 days after it started (never recovered). */
-fun performSequenceWipe(context: Context) {
+suspend fun performSequenceWipe(context: Context) {
     val lockPrefs = context.getSharedPreferences("lock_prefs", Context.MODE_PRIVATE)
     val labelPrefs = context.getSharedPreferences("app_label_prefs", Context.MODE_PRIVATE)
     val phonePrefs = context.getSharedPreferences("phone_prefs", Context.MODE_PRIVATE)
 
     val fullWipe = isFullWipeEnabled(lockPrefs) && SequenceDeviceAdminReceiver.isActive(context)
+
+    // Phoenix Protocol (small version): only when the user opted into full-device wipe, since
+    // that's the one path where the intruder photos/location history would otherwise be lost
+    // completely rather than just locally inaccessible. Best-effort - a failure here must never
+    // block the real wipe below, which is the actual safety mechanism.
+    if (fullWipe) {
+        runCatching { PhoenixEvacuation.uploadBackup(context) }
+            .onFailure { android.util.Log.e("SequenceMode", "Evacuation backup threw before wipe", it) }
+    }
 
     lockPrefs.edit().clear().apply()
     labelPrefs.edit().clear().apply()

@@ -16,7 +16,12 @@ data class LastMessageInfo(
     val appName: String,
     val packageName: String,
     val title: String,
-    val text: String
+    val text: String,
+    // The notification's own real action buttons (e.g. a call's "End call", a download's
+    // "Pause") - the same PendingIntents Android's own status bar would fire, not guessed
+    // UI. RemoteInput (direct-reply) actions are filtered out here since those already have
+    // their own dedicated reply flow via replyableMap/sendDirectReply.
+    val actions: List<Notification.Action> = emptyList()
 )
 
 /** A VoIP call (WhatsApp/Zoom/etc.) ringing right now - these never touch TelephonyManager/
@@ -96,6 +101,14 @@ class XenosNotificationListener : NotificationListenerService() {
         super.onListenerConnected()
         instance = this
         Log.d("XenosNL", "NotificationListener connected")
+
+        // Without this, only notifications posted AFTER this connect are ever seen - anything
+        // already showing (e.g. a long-lived foreground-service notification that posted once
+        // and hasn't updated since) stays invisible to this feed until it happens to re-post,
+        // even though it's still sitting in the real system tray. Found live 2026-08-09: a
+        // frequently-updating notification (charging %) always showed up, but ongoing
+        // rarely-updating ones (an SMS relay app's persistent notification) never did.
+        runCatching { activeNotifications }.getOrNull()?.forEach { sbn -> onNotificationPosted(sbn) }
     }
 
     override fun onListenerDisconnected() {
@@ -127,17 +140,23 @@ class XenosNotificationListener : NotificationListenerService() {
         }
 
         if (text.isNotBlank()) {
+            val buttonActions = notification.actions
+                ?.filter { it.remoteInputs.isNullOrEmpty() }
+                ?: emptyList()
             val msg = LastMessageInfo(
                 appName = appName,
                 packageName = pkg,
                 title = title,
-                text = text
+                text = text,
+                actions = buttonActions
             )
             lastMessageInfo = msg
             hasUnreadMessage = true
 
             missedNotifications.add(msg)
-            if (missedNotifications.size > 50) {
+            // Raised from 50 - this list is already in-memory only (lost on process death, not
+            // persisted to disk), so a higher cap costs a bit more RAM, not storage.
+            if (missedNotifications.size > 300) {
                 missedNotifications.removeAt(0)
             }
 
@@ -210,6 +229,13 @@ class XenosNotificationListener : NotificationListenerService() {
             true
         }.getOrDefault(false)
     }
+
+    /** Fires a notification's own real action button (e.g. a call's "End call") - the exact
+     * same PendingIntent tapping it in the system status bar would send. */
+    fun fireAction(action: Notification.Action): Boolean = runCatching {
+        action.actionIntent.send()
+        true
+    }.getOrDefault(false)
 
     private fun findDirectReplyAction(notification: Notification): Notification.Action? {
         val actions = notification.actions ?: return null

@@ -460,29 +460,33 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     }
 
     /** As Device Owner, this app can configure exactly what stays reachable during Kiosk
-     * mode (Screen Pinning). LOCK_TASK_FEATURE_NONE means the real status bar / notification
-     * shade / home / recents / power menu all stay blocked - our own notification bar panel
-     * is meant to replace them, not sit alongside them. Also registers this app as an allowed
-     * lock-task package so startLockTask() pins silently instead of showing the one-time
-     * system confirmation. Runs on every launch; a no-op if not Device Owner. */
+     * mode (Screen Pinning). The notification shade / recents / power menu stay blocked - our
+     * own notification bar panel is meant to replace them, not sit alongside them - but
+     * LOCK_TASK_FEATURE_HOME is enabled so opening a real app while pinned shows a HOME button
+     * (the middle button in the system nav) instead of just a back button, since this app is
+     * the device's home/launcher - pressing it returns here. Without this flag, Android's own
+     * lock-task nav only offers back, with no way back to the launcher except however far back
+     * that particular app's own back-stack happens to go. Also registers this app as an
+     * allowed lock-task package so startLockTask() pins silently instead of showing the
+     * one-time system confirmation. Runs on every launch; a no-op if not Device Owner. */
     private fun applyKioskLockTaskFeatures() {
         val dpm = getSystemService(DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager ?: return
         if (!dpm.isDeviceOwnerApp(packageName)) return
         val admin = SequenceDeviceAdminReceiver.componentName(this)
         runCatching {
-            // Kiosk mode still hides system chrome (LOCK_TASK_FEATURE_NONE below), but every
-            // currently-installed launchable app is also allowed through Lock Task, so pinning
-            // doesn't trap the user inside only the launcher - they can still open and switch
-            // between their real apps. This needs re-running whenever the app list changes
-            // (also called from onResume), since newly installed apps aren't retroactively
-            // allowed until this runs again.
+            // Kiosk mode still hides most system chrome (see LOCK_TASK_FEATURE_HOME above),
+            // but every currently-installed launchable app is also allowed through Lock Task,
+            // so pinning doesn't trap the user inside only the launcher - they can still open
+            // and switch between their real apps. This needs re-running whenever the app list
+            // changes (also called from onResume), since newly installed apps aren't
+            // retroactively allowed until this runs again.
             val launchablePackages = packageManager.queryIntentActivities(
                 Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
                 0
             ).map { it.activityInfo.packageName }.toSet()
             val allowed = (launchablePackages + packageName).toTypedArray()
             dpm.setLockTaskPackages(admin, allowed)
-            dpm.setLockTaskFeatures(admin, android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+            dpm.setLockTaskFeatures(admin, android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_HOME)
         }.onFailure { Log.e("DeviceOwner", "Failed to configure lock task features", it) }
     }
 
@@ -576,25 +580,49 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         runCatching { startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)) }
     }
 
+    /** Real bug found live 2026-08-10 on this Samsung device: launching the plain
+     * WIFI_CALLING_SETTINGS action with no extras crashes com.android.settings itself
+     * (NullPointerException in its own WifiCallingSettings.updateTitleForCurrentSub -
+     * confirmed via the actual system crash log, not this app's process) - that screen expects
+     * a subscription id extra that's normally only supplied by Settings' own internal
+     * navigation, and NPEs trying to resolve "current sub" without one. Not a bug in this app,
+     * but passing the default voice subscription id (a real, documented deep-link extra,
+     * Settings.EXTRA_SUB_ID) gives it what it's missing and avoids triggering the crash -
+     * runCatching's own fallback can't catch this on its own since the crash happens
+     * asynchronously inside Settings' own process after startActivity() already returned. */
     private fun openWifiCallingSettings() {
-        runCatching { startActivity(Intent("android.settings.WIFI_CALLING_SETTINGS")) }
+        val subId = runCatching {
+            val sm = getSystemService(TELEPHONY_SUBSCRIPTION_SERVICE) as android.telephony.SubscriptionManager
+            android.telephony.SubscriptionManager.getDefaultVoiceSubscriptionId()
+        }.getOrNull()
+        val intent = Intent("android.settings.WIFI_CALLING_SETTINGS").apply {
+            if (subId != null && subId != android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                putExtra(Settings.EXTRA_SUB_ID, subId)
+            }
+        }
+        runCatching { startActivity(intent) }
             .onFailure { runCatching { startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) } }
     }
 
-    private fun openMultiWindowSettings() {
-        // No public Android API/settings screen for this exists on every device - best-effort
-        // Samsung path, falling back to Display settings rather than doing nothing.
-        runCatching { startActivity(Intent("com.samsung.android.settings.SplitScreenSettingsActivity")) }
-            .onFailure { runCatching { startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS)) } }
-    }
-
+    /** Real device evidence 2026-08-10: com.samsung.knox.securefolder is pre-installed but its
+     * launcher shortcut component is deliberately disabled by Samsung until the user completes
+     * Secure Folder's own one-time setup (PIN/account) - getLaunchIntentForPackage() correctly
+     * returns null in that state, this was never a bug. A first attempt tried deep-linking
+     * directly into Secure Folder's own setup Activity - real evidence showed Knox deliberately
+     * self-finishes that Activity when launched by an external caller (splash screen shows, then
+     * destroys itself ~0.6s later, no error) - a genuine Knox security check, not something to
+     * fight. Falls back to the public, documented Security settings screen instead, where Secure
+     * Folder shows up for the user to reach through Samsung's own trusted in-Settings navigation -
+     * still gives a real next step instead of a dead end, without working around Knox's own
+     * caller-trust boundary. */
     private fun openSecureFolder() {
         val launchIntent = packageManager.getLaunchIntentForPackage("com.samsung.knox.securefolder")
         if (launchIntent != null) {
             startActivity(launchIntent)
-        } else {
-            Toast.makeText(this, "Secure Folder isn't set up on this device.", Toast.LENGTH_LONG).show()
+            return
         }
+        Toast.makeText(this, "Secure Folder isn't set up - opening Security settings to set it up.", Toast.LENGTH_LONG).show()
+        runCatching { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) }
     }
 
     private fun openAudioSharingSettings() {
@@ -823,25 +851,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         const val EXTRA_ELENE_COMMAND = "com.example.scifilauncher.extra.ELENE_COMMAND"
     }
 
-    private fun openPlayStoreForRating() {
-        val pkg = packageName
-        try {
-            // Try Play Store app
-            val uri = Uri.parse("market://details?id=$pkg")
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
-            // Fallback: browser
-            val uri = Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
-            val intent = Intent(Intent.ACTION_VIEW, uri)
-            startActivity(intent)
-        }
-    }
-
-    private fun openPlayStoreForFeedback() {
-        openPlayStoreForRating()
-    }
-
     private fun openPrivacyPolicyPage() {
         openUrlInPreferredBrowser(this, "https://xenos-hackcode.github.io/scifilauncher-privacy/")
     }
@@ -957,6 +966,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
         clearDebuggingRestrictionIfDeviceOwner()
         applyKioskLockTaskFeatures()
+        EleneApiClient.configureBaseUrl(this)
         enableEdgeToEdge()
 
         window.decorView.systemUiVisibility =
@@ -1051,12 +1061,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showAppLog by rememberSaveable { mutableStateOf(false) }
                 var showCommands by rememberSaveable { mutableStateOf(false) }
                 var showNearbyDevices by rememberSaveable { mutableStateOf(false) }
+                var showMultiControl by rememberSaveable { mutableStateOf(false) }
                 var showLaptopControl by rememberSaveable { mutableStateOf(false) }
                 var laptopTokenState by rememberSaveable { mutableStateOf(loadLaptopToken()) }
                 var showPhoneControl by rememberSaveable { mutableStateOf(false) }
                 var phoneControlTokenState by rememberSaveable { mutableStateOf(loadPhoneControlToken()) }
                 var showInstallFlags by rememberSaveable { mutableStateOf(false) }
                 var showCapabilities by rememberSaveable { mutableStateOf(false) }
+                var showDownload by rememberSaveable { mutableStateOf(false) }
                 var showMemory by rememberSaveable { mutableStateOf(false) }
                 var showLocationHistory by rememberSaveable { mutableStateOf(false) }
                 var appsSearchQuery by rememberSaveable { mutableStateOf("") }
@@ -1069,6 +1081,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 }
                 var installWatchEnabledState by rememberSaveable {
                     mutableStateOf(getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("install_watch_enabled", true))
+                }
+                var antiTheftModeEnabledState by rememberSaveable {
+                    mutableStateOf(isAntiTheftModeEnabled(getSharedPreferences("lock_prefs", MODE_PRIVATE)))
                 }
                 val batteryPrefs = getSharedPreferences("battery_prefs", MODE_PRIVATE)
                 val fontPrefs = getSharedPreferences("font_prefs", MODE_PRIVATE)
@@ -1099,6 +1114,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 val activeTheme = CedalThemes[themeIndex % CedalThemes.size]
                 val themeColor = activeTheme.primary
 
+                var iconPackPkg by rememberSaveable { mutableStateOf(IconPackManager.loadSelectedPack(context)) }
+                var languageOption by rememberSaveable { mutableStateOf(loadLanguage(themePrefs)) }
+
                 var showOnboarding by rememberSaveable { mutableStateOf(!isOnboardingComplete(context)) }
                 var showWelcome by rememberSaveable { mutableStateOf(true) }
                 var showApps by rememberSaveable { mutableStateOf(false) }
@@ -1110,8 +1128,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showBatteryAllowedApps by rememberSaveable { mutableStateOf(false) }
                 var isPageMode by rememberSaveable { mutableStateOf(false) }
 
-                var recentApps by remember { mutableStateOf(listOf<AppItem>()) }
-                val maxRecents = 10
+                // Real, persistent recents history (RecentAppHistory) replaced the old
+                // in-memory-only recentApps/launchApp accumulation - this tick just forces a
+                // fresh re-read after Clear, since RecentAppHistory itself isn't Compose state.
+                var recentsRefreshTick by remember { mutableStateOf(0) }
                 var showAbout by rememberSaveable { mutableStateOf(false) }
 
 
@@ -1247,6 +1267,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var eleneReply by remember { mutableStateOf<String?>(null) }
                 var eleneLoading by remember { mutableStateOf(false) }
                 var notificationFeed by remember { mutableStateOf(listOf<LastMessageInfo>()) }
+                var nowPlaying by remember { mutableStateOf<NowPlayingInfo?>(null) }
+                var loopNowPlaying by remember { mutableStateOf(false) }
                 var showNotificationPanel by remember { mutableStateOf(false) }
                 var showQuickSettingsPanel by remember { mutableStateOf(false) }
                 var flashlightOnState by remember { mutableStateOf(false) }
@@ -1305,7 +1327,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             speak("Negative. I need the Accessibility permission to control your screen. Opening Settings now.")
                             Toast.makeText(
                                 this@MainActivity,
-                                "Turn on \"SciFi Elene\" under Accessibility to let Elene control your screen.",
+                                "Turn on \"SciFi Xenos\" under Accessibility to let Xenos control your screen.",
                                 Toast.LENGTH_LONG
                             ).show()
                             runCatching {
@@ -1337,7 +1359,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         }
                         val service = ScifiAccessibilityService.instance
                         if (service == null) {
-                            commandReplyOverride = "Opening the Play Store for \"$query\". Turn on Elene's Accessibility permission under Settings if you want me to find and install it for you."
+                            commandReplyOverride = "Opening the Play Store for \"$query\". Turn on Xenos's Accessibility permission under Settings if you want me to find and install it for you."
                             return
                         }
                         commandReplyOverride = "Searching the Play Store for \"$query\"."
@@ -1600,6 +1622,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 commandReplyOverride = "Negative. I couldn't find an app matching \"$arg\" to unfreeze."
                             }
                         }
+                        "multi_control" -> if (arg != null) {
+                            val names = arg.split("|").map { it.trim() }.filter { it.isNotEmpty() }.take(3)
+                            val resolved = names.mapNotNull { AppResolver.resolvePackageName(contextAndroid, it, favoriteAppsPkgs) }
+                            when {
+                                resolved.size < 2 -> commandReplyOverride =
+                                    "Negative. I could only find ${resolved.size} of those apps installed - multi control needs at least two."
+                                !launchAppsInMultiControl(contextAndroid, resolved) ->
+                                    commandReplyOverride = "Negative. Couldn't open those apps in multi control."
+                                else -> commandReplyOverride = "Opening ${resolved.size} apps in multi control."
+                            }
+                        }
                         "open_page" -> when (arg) {
                             "home", "dashboard" -> goToScreen()
                             "apps", "games" -> goToScreen(apps = true)
@@ -1856,7 +1889,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
                         if (response == null) {
                             bubbleState = EleneBubbleState.UNRESPONSIVE
-                            speak("Negative. Could not reach Elene.")
+                            speak("Negative. Could not reach Xenos.")
                             kotlinx.coroutines.delay(1400L)
                             // Stays listening until "stop listening" is heard - a failed
                             // request isn't an exit condition - unless continuous listening
@@ -1940,6 +1973,45 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     }
                 }
 
+                // Live playback position only needs to poll while the panel showing it is
+                // actually open - a faster interval here (vs. the 1s notification poll above)
+                // is what makes the scrubber read as "live" rather than visibly stepping.
+                // Also drives our own "loop" approximation (see NowPlayingCard's comment on
+                // why there's no real platform repeat action to delegate to): once the track
+                // is within a second of its end, restart it. Confirmed live this needs two
+                // guards beyond the obvious one: only while actually PLAYING (a track just
+                // sitting paused near its end - which is exactly where com.harmix.player
+                // was parked during testing - isn't "finishing", so restarting it on loop-on
+                // was a real misfire); and a cooldown after firing, since not every app's
+                // seekTo(0) reliably sticks on the first try, and re-evaluating immediately
+                // against a not-yet-settled position caused this to fight itself.
+                LaunchedEffect(showNotificationPanel) {
+                    var restartedThisEnd = false
+                    var cooldownUntilMs = 0L
+                    while (showNotificationPanel) {
+                        val playing = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                        nowPlaying = playing
+                        val now = System.currentTimeMillis()
+                        if (loopNowPlaying && playing != null && playing.isPlaying &&
+                            playing.durationMs > 0 && now >= cooldownUntilMs
+                        ) {
+                            val remaining = playing.durationMs - playing.positionMs
+                            if (remaining <= 800L) {
+                                if (!restartedThisEnd) {
+                                    MediaSessionBridge.restartFromBeginning(this@MainActivity)
+                                    restartedThisEnd = true
+                                    cooldownUntilMs = now + 3000L
+                                }
+                            } else if (remaining > 1500L) {
+                                restartedThisEnd = false
+                            }
+                        }
+                        kotlinx.coroutines.delay(500L)
+                    }
+                    nowPlaying = null
+                    loopNowPlaying = false
+                }
+
                 val favoriteApps = visibleApps
                     .filter { it.packageName in favoriteAppsPkgs }
                     .take(6)
@@ -2016,15 +2088,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 },
                                 onAppClick = { pkg ->
                                     fun doLaunch() {
-                                        launchApp(
-                                            pkg,
-                                            visibleApps,
-                                            pm,
-                                            maxRecents,
-                                            lastOpenedPrefs
-                                        ) { updated ->
-                                            recentApps = updated
-                                        }
+                                        launchApp(pkg, pm, lastOpenedPrefs)
                                     }
 
                                     doLaunch()
@@ -2066,15 +2130,23 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                         }
 
                         showRecents -> {
-                            val filteredRecents = recentApps.filter { app ->
-                                visibleApps.any { it.packageName == app.packageName }
+                            val recentItems = remember(recentsRefreshTick, visibleApps) {
+                                val appsByPkg = visibleApps.associateBy { it.packageName }
+                                RecentAppHistory.loadAll(this@MainActivity).mapNotNull { entry ->
+                                    val app = appsByPkg[entry.packageName] ?: return@mapNotNull null
+                                    RecentDisplayItem(
+                                        app = app,
+                                        lastOpenedMs = entry.lastOpenedMs,
+                                        openCount = entry.openCount
+                                    )
+                                }
                             }
                             RecentsScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 themeColor = themeColor,
                                 isDark = isDark,
                                 batteryMode = batteryMode,
-                                recentApps = filteredRecents,
+                                recentItems = recentItems,
                                 onBackToDashboard = {
                                     showRecents = false
                                     showWelcome = false
@@ -2092,6 +2164,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                             recordLastOpened(lastOpenedPrefs, pkg)
                                         }
                                     }
+                                },
+                                onClearRecents = {
+                                    RecentAppHistory.clear(this@MainActivity)
+                                    recentsRefreshTick++
                                 }
                             )
                         }
@@ -2104,6 +2180,13 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 batteryMode = batteryMode,
                                 currentThemeIndex = themeIndex,
                                 onThemeChange = { idx -> themeIndex = idx },
+                                currentIconPackPkg = iconPackPkg,
+                                onSelectIconPack = { pkg ->
+                                    IconPackManager.saveSelectedPack(this@MainActivity, pkg)
+                                    iconPackPkg = pkg
+                                    allAppsState = loadAllApps(packageManager)
+                                },
+                                onLanguageChange = { languageOption = it },
                                 onBackToDashboard = {
                                     batteryMode = loadBatterySaverMode(batteryPrefs)
                                     fontSizeOption = loadFontSize(fontPrefs)
@@ -2117,7 +2200,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
                                 },
-                                onFeedback = { openPlayStoreForFeedback() },
                                 onPrivacyPolicy = { openPrivacyPolicyPage() },
                                 onMakeDefaultLauncher = { openHomeSelectorSettings() },
                                 onOpenAbout = {
@@ -2164,6 +2246,29 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onBack = {
                                     showCapabilities = false
                                     showSettings = true
+                                },
+                                onOpenDownload = {
+                                    showCapabilities = false
+                                    showDownload = true
+                                }
+                            )
+                        }
+
+                        showDownload -> {
+                            DownloadScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                onOpenLaptopControl = {
+                                    showDownload = false
+                                    showLaptopControl = true
+                                },
+                                onOpenPhoneControl = {
+                                    showDownload = false
+                                    showPhoneControl = true
+                                },
+                                onBack = {
+                                    showDownload = false
+                                    showCapabilities = true
                                 }
                             )
                         }
@@ -2265,6 +2370,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 isDark = isDark,
                                 batteryMode = batteryMode,
                                 lockPrefs = lockPrefs,
+                                languageOption = languageOption,
                                 onBackToDashboard = { showSecurity = false },
                                 onOpenStorage = {
                                     showSecurity = false
@@ -2374,6 +2480,18 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                         runCatching { startLockTask() }
                                     } else {
                                         runCatching { stopLockTask() }
+                                    }
+                                },
+                                antiTheftModeEnabled = antiTheftModeEnabledState,
+                                onToggleAntiTheftMode = { enabled ->
+                                    antiTheftModeEnabledState = enabled
+                                    setAntiTheftModeEnabled(lockPrefs, enabled)
+                                    // Turning OFF: immediately cancel any pending motion alert so
+                                    // Elene stops asking "are you OK?" and won't push a state
+                                    // change (the confirm-or-arm countdown is cancelled here, not
+                                    // just left to time out 10 minutes later).
+                                    if (!enabled) {
+                                        MotionTheftDetector.cancelPendingMotionAlert(context)
                                     }
                                 },
                                 onOpenLockScreenSettings = {
@@ -2567,6 +2685,15 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             )
                         }
 
+                        showMultiControl -> {
+                            MultiControlScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                apps = allAppsState,
+                                onBack = { showMultiControl = false }
+                            )
+                        }
+
                         showScreenRecordSetup -> {
                             ScreenRecordSetupScreen(
                                 themeColor = themeColor,
@@ -2652,9 +2779,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSecurity = true   // go back to Security screen
                                 },
                                 onAppClick = { pkg ->
-                                    launchApp(pkg, visibleApps, pm, maxRecents, lastOpenedPrefs) { updated ->
-                                        recentApps = updated
-                                    }
+                                    launchApp(pkg, pm, lastOpenedPrefs)
                                 }
                             )
                         }
@@ -2697,7 +2822,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
                                     isPageMode = false
-                                    recentApps = emptyList()
+                                    RecentAppHistory.clear(this@MainActivity)
+                                    recentsRefreshTick++
                                     hiddenApps = emptySet()
                                     favoriteAppsPkgs = emptySet()
                                 },
@@ -2961,6 +3087,32 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 XenosNotificationListener.clearMissed()
                                 notificationFeed = emptyList()
                             },
+                            onFireAction = { action ->
+                                XenosNotificationListener.instance?.fireAction(action)
+                            },
+                            nowPlaying = nowPlaying,
+                            onPlayPause = {
+                                MediaSessionBridge.playPause(this@MainActivity)
+                                nowPlaying = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                            },
+                            onSeek = { positionMs ->
+                                MediaSessionBridge.seekTo(this@MainActivity, positionMs)
+                                nowPlaying = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                            },
+                            onSkipNext = {
+                                MediaSessionBridge.skipNext(this@MainActivity)
+                                nowPlaying = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                            },
+                            onSkipPrevious = {
+                                MediaSessionBridge.skipPrevious(this@MainActivity)
+                                nowPlaying = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                            },
+                            onSetSpeed = { speed ->
+                                MediaSessionBridge.setPlaybackSpeed(this@MainActivity, speed)
+                                nowPlaying = MediaSessionBridge.currentNowPlaying(this@MainActivity)
+                            },
+                            loopEnabled = loopNowPlaying,
+                            onToggleLoop = { loopNowPlaying = !loopNowPlaying },
                             onClose = { showNotificationPanel = false }
                         )
                     }
@@ -3030,7 +3182,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onToggleDnd = { dndOnState = toggleDnd() },
                                 onOpenWifiCalling = { openWifiCallingSettings() },
                                 onScanQr = { launchQrScan() },
-                                onOpenMultiControl = { openMultiWindowSettings() },
+                                onOpenMultiControl = {
+                                    showQuickSettingsPanel = false
+                                    showMultiControl = true
+                                },
                                 onOpenSecureFolder = { openSecureFolder() },
                                 onOpenAudioBroadcast = { openAudioSharingSettings() },
                                 onBrightnessChange = { percent ->
@@ -3097,6 +3252,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
     private fun loadAllApps(pm: PackageManager): List<AppItem> {
         val labelPrefs = getSharedPreferences("app_label_prefs", MODE_PRIVATE)
+        val selectedPack = IconPackManager.loadSelectedPack(this)
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
@@ -3104,10 +3260,12 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         return resolveInfos
             .map {
                 val pkg = it.activityInfo.packageName
+                val realIcon = it.activityInfo.loadIcon(pm).toBitmap()
+                val component = android.content.ComponentName(pkg, it.activityInfo.name)
                 AppItem(
                     label = loadAppLabelOverride(labelPrefs, pkg) ?: it.loadLabel(pm).toString(),
                     packageName = pkg,
-                    iconBitmap = it.activityInfo.loadIcon(pm).toBitmap()
+                    iconBitmap = IconPackManager.resolveIcon(this, selectedPack, component, realIcon)
                 )
             }
             .sortedBy { it.label.lowercase() }
@@ -3187,28 +3345,19 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         }
     }
 
-    /**
-     * Wrong PIN was entered. Warns the user, requests a fingerprint, and starts a 5-minute
-     * timer - if biometrics aren't confirmed in that window, Sequence Mode activates.
-     */
+    /** Launches [pkg] from the launcher's own UI (app grid, freezer, etc). Recents tracking
+     * itself (open count, last-opened time, thumbnail) is no longer done here - see
+     * ScifiAccessibilityService's foreground-app tracking, which covers every real way an app
+     * gets entered, not just launcher-initiated taps. */
     private fun launchApp(
         pkg: String,
-        apps: List<AppItem>,
         pm: PackageManager,
-        maxRecents: Int,
-        lastOpenedPrefs: SharedPreferences,
-        updateRecents: (List<AppItem>) -> Unit
+        lastOpenedPrefs: SharedPreferences
     ) {
         val launchIntent = pm.getLaunchIntentForPackage(pkg)
         if (launchIntent != null) {
             startActivity(launchIntent)
             recordLastOpened(lastOpenedPrefs, pkg)
-
-            val clickedApp = apps.firstOrNull { it.packageName == pkg }
-            if (clickedApp != null) {
-                val recents = listOf(clickedApp)
-                updateRecents(recents.take(maxRecents))
-            }
         }
     }
 
@@ -3314,7 +3463,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Elene")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Xenos")
         }
 
         try {
@@ -3413,13 +3562,15 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         val normalized = text.trim()
         val lower = normalized.lowercase(Locale.getDefault())
 
-        // load user-defined command word, default "elene"
+        // load user-defined command word, default "zenos" - "Xenos" is pronounced "Zenos", and
+        // this is matched against speech-recognizer output (phonetic transcription), not the
+        // intended spelling.
         val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
-        val cmdWord = lockPrefs.getString("voice_command_word", "elene") ?: "elene"
+        val cmdWord = lockPrefs.getString("voice_command_word", "zenos") ?: "zenos"
         val cmdLower = cmdWord.lowercase(Locale.getDefault()).trim()
 
         // 1) Exact "command word" → treat like old "hey elene"
-        if (lower == cmdLower || lower == "hey elene") {
+        if (lower == cmdLower || lower == "hey zenos" || lower == "hey xenos") {
             val lang = currentLanguage()
             val phonePrefs = getSharedPreferences("phone_prefs", MODE_PRIVATE)
             val userName = loadUserName(phonePrefs)
@@ -3435,8 +3586,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             return
         }
 
-        // 3) Legacy: if user literally says "elene ..." keep supporting it
-        if (lower.startsWith("elene")) {
+        // 3) Legacy: if user literally says "zenos ..." keep supporting it
+        if (lower.startsWith("zenos") || lower.startsWith("xenos")) {
             val afterName = normalized.drop(5).trim()
             val command = if (afterName.isBlank()) "let's talk" else afterName
             handleAssistantCommand(command)

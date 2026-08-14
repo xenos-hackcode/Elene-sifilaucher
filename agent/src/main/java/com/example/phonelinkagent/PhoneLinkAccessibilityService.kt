@@ -2,6 +2,9 @@ package com.example.phonelinkagent
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,9 +14,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.app.NotificationCompat
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 /**
  * The only accessibility service in this app - real gesture dispatch (same mechanics as
@@ -28,21 +34,37 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
         var instance: PhoneLinkAccessibilityService? = null
         private const val FRAME_INTERVAL_MS = 150L
         private const val MAX_CONSECUTIVE_FRAME_FAILURES = 8
+        private const val PAUSED_CHANNEL_ID = "phone_link_paused"
+        private const val PAUSED_NOTIFICATION_ID = 4825
     }
 
     private val handler = Handler(Looper.getMainLooper())
 
     private var client: PhoneLinkAgentClient? = null
     @Volatile private var streaming = false
+    // True between MediaProjection being revoked (screen off) and a fresh consent grant -
+    // streaming stays true the whole time (websocket/session logically still "on"), this is
+    // the finer-grained flag for "capture specifically isn't running right now".
+    @Volatile private var paused = false
     private var controllerPresent = false
     private var pendingFrameRequestId: String? = null
+
+    // Held for the whole streaming session (start to stop), not tied to ScreenCaptureService's
+    // own lifecycle - that service can fully stop and restart across a pause/resume cycle
+    // (confirmed necessary live 2026-08-10: it crashes if it tries to stay foreground-alive
+    // through a projection loss, see ScreenCaptureService.onStop()), but the CPU should stay
+    // awake for the whole logical session regardless. Real known limit found the same day: this
+    // alone does NOT keep capture alive through a screen-off - Android revokes MediaProjection
+    // on screen-off unconditionally, wake lock or not - it only helps avoid unrelated CPU-sleep
+    // stalls while the screen is genuinely on but the app is backgrounded/idle.
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // A single missed frame (acquireLatestImage() returning null, a real and unremarkable
     // hiccup on some hardware - confirmed live on a Unisoc-chipset device where frame #2 of a
     // session failed while every other frame around it succeeded) must NOT kill the whole
-    // session - only a genuine sustained failure should. MediaProjection actually stopping
-    // (ACTION_PROJECTION_STOPPED) is a real, unambiguous hard-stop signal and always ends the
-    // session immediately; ACTION_FRAME_ERROR just skips that one frame and tries again.
+    // session - only a genuine sustained failure should. ACTION_FRAME_ERROR just skips that one
+    // frame and tries again; ACTION_PROJECTION_STOPPED (screen off - Android revokes the grant)
+    // pauses instead of ending the session, see pauseSession() below.
     private var consecutiveFrameFailures = 0
 
     var onStatusChanged: ((PhoneLinkAgentStatus) -> Unit)? = null
@@ -53,7 +75,18 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
                 ScreenCaptureService.ACTION_FRAME_READY -> onFrameReady(intent)
                 ScreenCaptureService.ACTION_FRAME_ERROR -> onFrameFailed()
                 ScreenCaptureService.ACTION_PROJECTION_STOPPED -> {
-                    android.util.Log.w("PhoneLinkAgent", "Projection stopped - ending session")
+                    // Android itself revokes MediaProjection when the screen turns off - a
+                    // deliberate platform privacy behavior, not something a wake lock or any
+                    // other in-app fix can prevent. Found live 2026-08-10. Real consequence:
+                    // resuming needs one fresh user consent tap, Android won't allow silently
+                    // restarting capture - so this pauses (keeps the websocket + foreground
+                    // service alive, shows a real ongoing notification with a resume action)
+                    // instead of fully logging out, so reconnecting is as fast as possible.
+                    android.util.Log.w("PhoneLinkAgent", "Projection stopped (screen off) - pausing")
+                    pauseSession()
+                }
+                ScreenCaptureService.ACTION_STOP_SESSION_REQUESTED -> {
+                    android.util.Log.d("PhoneLinkAgent", "Stop requested from paused notification")
                     stopSession()
                 }
             }
@@ -67,6 +100,7 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
             addAction(ScreenCaptureService.ACTION_FRAME_READY)
             addAction(ScreenCaptureService.ACTION_FRAME_ERROR)
             addAction(ScreenCaptureService.ACTION_PROJECTION_STOPPED)
+            addAction(ScreenCaptureService.ACTION_STOP_SESSION_REQUESTED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(captureReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -141,11 +175,23 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
 
     fun isActive(): Boolean = streaming
 
+    /** Accurate current status for a caller that wasn't around to receive onStatusChanged
+     * updates as they happened (e.g. MainActivity re-reading state fresh on onCreate/onResume,
+     * after being closed and reopened) - reconstructs the same states pauseSession()/
+     * onCaptureStarted()/the onControllerPresence callback would have pushed live. */
+    fun currentStatus(): PhoneLinkAgentStatus = when {
+        !streaming -> PhoneLinkAgentStatus.IDLE
+        paused -> PhoneLinkAgentStatus.PAUSED
+        controllerPresent -> PhoneLinkAgentStatus.ACTIVE
+        else -> PhoneLinkAgentStatus.WAITING_FOR_CONTROLLER
+    }
+
     fun startSession(token: String) {
         if (streaming) return
         streaming = true
         controllerPresent = false
         consecutiveFrameFailures = 0
+        acquireWakeLock()
         onStatusChanged?.invoke(PhoneLinkAgentStatus.WAITING_FOR_CONTROLLER)
         val agentClient = PhoneLinkAgentClient(token)
         agentClient.onControllerPresence = { present ->
@@ -165,6 +211,7 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
     fun stopSession() {
         if (!streaming) return
         streaming = false
+        paused = false
         controllerPresent = false
         pendingFrameRequestId = null
         client?.disconnect()
@@ -172,14 +219,94 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
         runCatching {
             startService(Intent(this, ScreenCaptureService::class.java).setAction(ScreenCaptureService.ACTION_STOP_CAPTURE))
         }
+        releaseWakeLock()
+        cancelPausedNotification()
         onStatusChanged?.invoke(PhoneLinkAgentStatus.IDLE)
     }
 
+    /** MediaProjection was revoked by Android (screen turned off) - the session stays logically
+     * "on" (websocket, pairing token stay alive), just not sending frames until the user grants
+     * a fresh capture consent. ScreenCaptureService itself is allowed to fully stop here (see
+     * its onStop() for why trying to keep it foreground-alive through a projection loss crashes)
+     * - what actually needs to survive the pause (the websocket connection, the wake lock, a
+     * real notification offering a fast way back) all lives here instead, in a service with no
+     * foreground-service-type restrictions to fight with. */
+    private fun pauseSession() {
+        if (!streaming) return
+        paused = true
+        pendingFrameRequestId = null
+        postPausedNotification()
+        onStatusChanged?.invoke(PhoneLinkAgentStatus.PAUSED)
+    }
+
     /** Called directly by MainActivity right after MediaProjection consent is granted and
-     * ScreenCaptureService has been started. */
+     * ScreenCaptureService has been started - both for the first START and for resuming after
+     * a pause, so it has to restore the right status either way, not just blindly request a
+     * frame (a resume needs onStatusChanged fired again since controllerPresent likely didn't
+     * change - the phone/controller connection was kept alive through the pause). */
     fun onCaptureStarted() {
         android.util.Log.d("PhoneLinkAgent", "onCaptureStarted: streaming=$streaming controllerPresent=$controllerPresent")
+        paused = false
+        cancelPausedNotification()
+        onStatusChanged?.invoke(
+            if (controllerPresent) PhoneLinkAgentStatus.ACTIVE else PhoneLinkAgentStatus.WAITING_FOR_CONTROLLER
+        )
         handler.postDelayed({ requestFrame() }, 500L)
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneLinkAgent:session").apply {
+            setReferenceCounted(false)
+            acquire(TimeUnit.HOURS.toMillis(6))
+        }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+    }
+
+    /** A plain notification, NOT tied to any foreground-service claim - this service (an
+     * AccessibilityService, bound via BIND_ACCESSIBILITY_SERVICE) has no foreground-service-type
+     * restriction to run into, unlike ScreenCaptureService's mediaProjection type. setOngoing
+     * still applies (resists a casual swipe) without needing to fake foreground-service status
+     * to get it. RESUME jumps straight to a fresh capture consent request; STOP genuinely ends
+     * the whole session - never a dead end. */
+    private fun postPausedNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(PAUSED_CHANNEL_ID, "Phone Link", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        val resumeIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_RESUME_CAPTURE, true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopIntent = PendingIntent.getBroadcast(
+            this, 0,
+            Intent(ScreenCaptureService.ACTION_STOP_SESSION_REQUESTED).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, PAUSED_CHANNEL_ID)
+            .setContentTitle("Screen sharing paused")
+            .setContentText("Screen turned off - tap to resume, or Stop to end the session")
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setOngoing(true)
+            .setContentIntent(resumeIntent)
+            .addAction(0, "RESUME", resumeIntent)
+            .addAction(0, "STOP", stopIntent)
+            .build()
+        runCatching { getSystemService(NotificationManager::class.java).notify(PAUSED_NOTIFICATION_ID, notification) }
+    }
+
+    private fun cancelPausedNotification() {
+        runCatching { getSystemService(NotificationManager::class.java).cancel(PAUSED_NOTIFICATION_ID) }
     }
 
     fun onCaptureDenied() {
@@ -187,8 +314,8 @@ class PhoneLinkAccessibilityService : AccessibilityService() {
     }
 
     private fun requestFrame() {
-        if (!streaming || !controllerPresent) {
-            android.util.Log.d("PhoneLinkAgent", "requestFrame skipped: streaming=$streaming controllerPresent=$controllerPresent")
+        if (!streaming || !controllerPresent || paused) {
+            android.util.Log.d("PhoneLinkAgent", "requestFrame skipped: streaming=$streaming controllerPresent=$controllerPresent paused=$paused")
             return
         }
         val requestId = System.currentTimeMillis().toString()

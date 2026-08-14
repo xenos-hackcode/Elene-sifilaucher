@@ -48,12 +48,12 @@ private data class OnboardingSlide(val title: String, val body: String)
 private val TUTORIAL_SLIDES = listOf(
     OnboardingSlide(
         title = "LEARNING YOU",
-        body = "Elene learns from your behavior for the next 2 months to personalize how " +
-                "she assists you. You can read the details of this anytime in Settings > Profile."
+        body = "Xenos learns from your behavior for the next 2 months to personalize how " +
+                "he assists you. You can read the details of this anytime in Settings > Profile."
     ),
     OnboardingSlide(
         title = "READY",
-        body = "That covers the essentials. Explore Security, Settings, and the Elene bubble " +
+        body = "That covers the essentials. Explore Security, Settings, and the Xenos bubble " +
                 "whenever you need them."
     )
 )

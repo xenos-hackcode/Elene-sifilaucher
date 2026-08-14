@@ -8,7 +8,11 @@ import android.view.View
 import kotlin.math.max
 import kotlin.random.Random
 
-class CedalMatrixRainView @JvmOverloads constructor(
+/** Falling green "matrix rain" effect - originally built under the name CedalMatrixRainView but
+ * moved here to back Xenos's keyboard instead (the hacker/cyber one), since Cedal is meant to be
+ * the professional-looking keyboard and Xenos the hacker one - not the other way around, which is
+ * how this was originally wired up. */
+class MatrixRainView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0

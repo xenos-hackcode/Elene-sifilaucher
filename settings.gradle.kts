@@ -22,4 +22,5 @@ dependencyResolutionManagement {
 rootProject.name = "SciFiLauncher"
 include(":app")
 include(":agent")
+include(":controller")
  

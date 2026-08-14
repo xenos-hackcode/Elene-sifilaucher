@@ -227,7 +227,7 @@ class ScreenPerceptionService : Service() {
             )
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Elene is looking at your screen")
+            .setContentTitle("Xenos is looking at your screen")
             .setContentText(if (singleShot) "One-time screen description" else "Watching to help play")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)

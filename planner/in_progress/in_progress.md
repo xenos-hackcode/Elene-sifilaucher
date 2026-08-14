@@ -71,6 +71,51 @@ result in `experience.md`) as they're actually tested — don't mark done from a
       full detail.
 - [ ] Mic-reopens-with-AI's-own-voice: does the 500ms buffer after TTS actually stop the mic from
       picking up Elene's own voice, or does the issue persist?
+- [x] Anti-theft mode toggle (2026-08-07, see done.md) - **confirmed 2026-08-07**, user tested
+      live on the real device, works as intended.
+- [x] Phoenix Protocol evacuation backup (2026-08-07, see done.md) - **confirmed 2026-08-08**, user
+      tapped "Test evacuation backup now" on the real device and it succeeded, after a real
+      SocketTimeoutException bug was found via logcat and fixed (readTimeout/writeTimeout weren't
+      actually raised the first time, only callTimeout was).
+- [ ] Hey Elene personalized wake-word matching (2026-08-08, see done.md) - needs the user to
+      actually record 5 takes in Settings, then test over real repeated use whether "Hey Elene"
+      now reliably triggers for their accent (the actual problem this was built to fix) and
+      whether the auto-calibrated DTW threshold needs adjustment either direction.
+- [x] Full UI localization, Settings screen (2026-08-10, see done.md) - **confirmed 2026-08-11**,
+      user tested live, everything works.
+- [ ] Full UI localization, Security screen (2026-08-11, see done.md) - built on the same
+      tr()/LocalLanguage system, languageOption lifted to MainActivity so both screens share live
+      state; not yet confirmed live - user needs to switch to Yoruba and check Security this time
+      (Settings already confirmed working).
+- [ ] Tracker/ad blocking VPN fixes (2026-08-11, see done.md) - concurrent DNS forwarding + shorter
+      timeout (fixes real slowness), plus a structured-concurrency fix so stopping the VPN actually
+      cancels in-flight work immediately (fixes "not answering" after toggling off). Neither
+      re-tested live yet after the second fix.
+- [ ] Security screen fixed header (2026-08-11, see done.md) - back button restructured to stay
+      pinned while scrolling, matching Settings. Not yet confirmed live.
+
+## Full UI localization: remaining screens (2026-08-10, ongoing)
+User explicitly chose full scope ("every screen, every string") over a smaller Settings-only or
+spoken-phrases-only option. Settings and Security screens are complete (see done.md) - every other
+screen (Dashboard, Capabilities, About, Memory, Nearby Devices, Multi Control, Icon Pack
+panel, etc.) still has hardcoded English strings and needs the same tr()-based migration. This is
+real, large, ongoing work (every screen has its own set of strings) - continue incrementally,
+screen by screen, verifying each compiles and renders correctly before moving to the next, rather
+than attempting all of them in one uncheckable pass.
+
+## Self-update routine unattended deploy - status split (2026-08-09)
+**No longer in progress - resolved, moved to done.md.** The original `gcloud`-in-sandbox approach for
+the **backend** deploy path is confirmed permanently dead (hard 403 network-policy block on every
+official Google Cloud SDK distribution channel) and the routine honestly reports that limitation and
+stops rather than pretending to deploy. The **Android app** path, by contrast, is now live: routed
+around the same `gcloud` gap entirely by triggering Cloud Build over raw REST (JWT auth, no CLI),
+proven with a real successful build of this app, then wired into the production routine with the
+user's explicit go-ahead. See `done.md` for both accounts (the backend dead-end and the Android
+wiring) and `not_started.md` for the debugging history.
+
+**Not yet confirmed live**: the production routine actually firing on a real approved Android-scoped
+issue and completing the full j-o flow unattended - proven interactively and via manual build/test
+so far, not yet through a real routine run.
 
 ### Needs something beyond this one phone — ask the user before attempting
 - [ ] Sister's voice (or any non-enrolled voice) actually gets refused for a gated command —

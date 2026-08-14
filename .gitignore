@@ -23,6 +23,10 @@ local.properties
 backend/elene/venv/
 backend/elene/__pycache__/
 
+# Laptop agent build output (PyInstaller)
+laptop_agent/build/
+laptop_agent/dist/
+
 # Signing keys — never commit
 *.jks
 *.keystore
