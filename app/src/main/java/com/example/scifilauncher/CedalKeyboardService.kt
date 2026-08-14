@@ -27,7 +27,12 @@ class CedalKeyboardService : InputMethodService() {
         val clip = clipboardManager.primaryClip
         val item = clip?.getItemAt(0)
         val text = item?.text?.toString()?.trim()
-        if (!text.isNullOrEmpty()) {
+        // OnPrimaryClipChangedListener is a documented double-fire quirk on this device (Samsung
+        // One UI) - one real copy calls this listener twice for the same clip, which without a
+        // guard added the same text as two back-to-back entries ("repeated twice" in the list).
+        // Only compare against the single most-recent entry, not the whole history, so genuinely
+        // re-copying the same text later (after other copies in between) still records normally.
+        if (!text.isNullOrEmpty() && clipHistory.firstOrNull()?.text != text) {
             clipHistory.add(0, ClipEntry(text, System.currentTimeMillis()))
             if (clipHistory.size > 20) clipHistory.removeLast()
         }
