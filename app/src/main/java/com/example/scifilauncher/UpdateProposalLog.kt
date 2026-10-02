@@ -7,6 +7,11 @@ import org.json.JSONObject
 enum class UpdateCategory { FEATURE_ADDED, BUG_FIX, FEATURE_REMOVED, OTHER }
 enum class ProposalOrigin { USER, ELENE }
 enum class UpdateProposalStatus { PROPOSED, APPROVED, DENIED }
+// UPDATE_APP = a change to this app's own source (the original, only kind until 2026-09-25).
+// NEW_APP = a request for a brand-new, separate standalone Android app - kept as its own kind
+// (not just another UpdateCategory) because it's handled by a completely separate backend
+// endpoint/GitHub label/scheduled cloud routine, never touching this app's own source.
+enum class ProposalKind { UPDATE_APP, NEW_APP }
 
 /** APPROVED means the user has greenlit the change with a real fingerprint scan - it does NOT
  * mean the change has actually happened. There is no code-generation/build/deploy pipeline
@@ -21,7 +26,8 @@ data class UpdateProposalEntry(
     val timestamp: Long,
     val status: UpdateProposalStatus,
     val respondedAt: Long?,
-    val denialReason: String? = null
+    val denialReason: String? = null,
+    val kind: ProposalKind = ProposalKind.UPDATE_APP
 )
 
 private const val PREFS_NAME = "update_proposal_log_prefs"
@@ -63,7 +69,8 @@ object UpdateProposalLog {
                     timestamp = o.getLong("timestamp"),
                     status = runCatching { UpdateProposalStatus.valueOf(o.getString("status")) }.getOrDefault(UpdateProposalStatus.PROPOSED),
                     respondedAt = if (o.has("respondedAt") && !o.isNull("respondedAt")) o.getLong("respondedAt") else null,
-                    denialReason = if (o.has("denialReason") && !o.isNull("denialReason")) o.getString("denialReason") else null
+                    denialReason = if (o.has("denialReason") && !o.isNull("denialReason")) o.getString("denialReason") else null,
+                    kind = runCatching { ProposalKind.valueOf(o.getString("kind")) }.getOrDefault(ProposalKind.UPDATE_APP)
                 )
             }
         }.getOrDefault(emptyList())
@@ -82,6 +89,7 @@ object UpdateProposalLog {
             o.put("status", e.status.name)
             o.put("respondedAt", e.respondedAt)
             o.put("denialReason", e.denialReason)
+            o.put("kind", e.kind.name)
             arr.put(o)
         }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_ENTRIES, arr.toString()).apply()

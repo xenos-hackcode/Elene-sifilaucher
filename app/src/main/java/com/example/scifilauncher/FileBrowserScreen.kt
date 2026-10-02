@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -42,27 +43,26 @@ fun FileBrowserScreen(
     val context = LocalContext.current
     val rootDir = remember { Environment.getExternalStorageDirectory() }
     var currentDir by remember { mutableStateOf(rootDir) }
-
-    val bg = if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5)
-    val textColor = if (isDark) Color.White else Color.Black
+    val textColor = TerminalStyle.ink
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(bg)
+            .background(TerminalStyle.backgroundBrush)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
+                .padding(start = 20.dp, end = 20.dp, bottom = 16.dp, top = 16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "< BACK",
-                    color = themeColor,
+                    text = "‹  SECURITY",
+                    color = textColor,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier.clickable {
                         val parent = currentDir.parentFile
                         if (currentDir != rootDir && parent != null) {
@@ -72,23 +72,35 @@ fun FileBrowserScreen(
                         }
                     }
                 )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = "FILE MANAGER",
-                    color = themeColor,
-                    fontSize = 18.sp,
-                    fontFamily = FontFamily.Monospace
-                )
             }
-
-            Spacer(Modifier.height(4.dp))
-
             Text(
-                text = currentDir.absolutePath.removePrefix(rootDir.absolutePath).ifBlank { "/" },
-                color = Color.Gray,
+                text = "XENOS  /  FILES",
+                color = themeColor,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            Text(
+                text = "File manager",
+                color = textColor,
+                fontSize = 28.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                text = currentDir.absolutePath.removePrefix(rootDir.absolutePath).ifBlank { "/" },
+                color = TerminalStyle.muted,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 2.dp)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .padding(top = 16.dp, bottom = 12.dp)
+                    .background(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(themeColor, Color.Transparent)))
             )
 
             if (!hasAccess) {
@@ -107,8 +119,9 @@ fun FileBrowserScreen(
                     color = Color.Black,
                     fontSize = 14.sp,
                     fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
                     modifier = Modifier
-                        .background(themeColor)
+                        .background(themeColor, androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
                         .clickable(onClick = onRequestAccess)
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 )
@@ -122,7 +135,7 @@ fun FileBrowserScreen(
                 if (entries.isEmpty()) {
                     Text(
                         text = "This folder is empty.",
-                        color = Color.Gray,
+                        color = TerminalStyle.muted,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace
                     )

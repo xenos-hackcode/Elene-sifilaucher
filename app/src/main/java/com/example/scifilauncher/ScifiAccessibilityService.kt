@@ -13,6 +13,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -37,6 +38,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.random.Random
 
 /**
@@ -62,6 +65,7 @@ class ScifiAccessibilityService : AccessibilityService() {
 
     private var highlightView: View? = null
     private var hideOverlayView: View? = null
+    private var skeletonOverlayView: HandSkeletonOverlayView? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -122,6 +126,41 @@ class ScifiAccessibilityService : AccessibilityService() {
         registerCallStateListener()
         scheduleWakeWordCheck(delayMillis = 4000L)
         MotionTheftDetector.register(this)
+        runCatching {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val request = android.net.NetworkRequest.Builder()
+                .addTransportType(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            cm.registerNetworkCallback(request, wifiNetworkCallback)
+        }
+    }
+
+    // Feeds the Globe's NETWORK picker (NetworkHistory.kt, GlobeActivity.kt) - one entry per
+    // distinct network (deduped by BSSID), location captured once at first connection. SSID
+    // requires ACCESS_FINE_LOCATION on modern Android (already granted elsewhere in this app),
+    // same reasoning as everywhere else location-gated info is read.
+    private val wifiNetworkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        // Just a trigger signal ("wifi capabilities changed, go check current state") - the
+        // actual SSID/BSSID read happens via WifiManager.connectionInfo below, NOT via this
+        // callback's own NetworkCapabilities.getTransportInfo(). Real evidence: the
+        // capabilities-derived WifiInfo stayed redacted ("<unknown ssid>", a placeholder BSSID)
+        // even with NEARBY_WIFI_DEVICES + ACCESS_BACKGROUND_LOCATION both confirmed granted (real
+        // appops check, not assumed) - NetworkCapabilities' redaction has its own stricter rules
+        // that don't seem to lift the same way. WifiManager.connectionInfo is the same API this
+        // file's showNetworkInfoPanel-adjacent BSSID comparison already reads successfully
+        // elsewhere, so it's the proven-working path, not a new guess.
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: android.net.NetworkCapabilities) {
+            if (!capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) return
+            val wifiManager = getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return
+            val info = runCatching { wifiManager.connectionInfo }.getOrNull() ?: return
+            val ssid = info.ssid?.removeSurrounding("\"")?.takeIf { it.isNotBlank() && it != "<unknown ssid>" } ?: return
+            val bssid = info.bssid?.takeIf { it != "02:00:00:00:00:00" } ?: return
+            val lm = getSystemService(LOCATION_SERVICE) as? android.location.LocationManager
+            val fix = runCatching {
+                lm?.getProviders(true)?.mapNotNull { p -> lm.getLastKnownLocation(p) }?.maxByOrNull { it.time }
+            }.getOrNull()
+            NetworkHistory.recordConnection(this@ScifiAccessibilityService, ssid, bssid, fix?.latitude, fix?.longitude)
+        }
     }
 
     override fun onDestroy() {
@@ -135,6 +174,9 @@ class ScifiAccessibilityService : AccessibilityService() {
         runCatching { unregisterReceiver(voipCallReceiver) }
         runCatching { unregisterReceiver(installReceiver) }
         runCatching { unregisterReceiver(perceptionReceiver) }
+        runCatching {
+            (getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).unregisterNetworkCallback(wifiNetworkCallback)
+        }
         bubbleHandler.removeCallbacks(wakeWordCheckRunnable)
         if (gameLoopActive) runCatching {
             startService(Intent(this, ScreenPerceptionService::class.java).setAction(ScreenPerceptionService.ACTION_STOP_CAPTURE))
@@ -313,7 +355,18 @@ class ScifiAccessibilityService : AccessibilityService() {
                     bubbleHandler.removeCallbacks(visibilityRunnable)
                     hideBubble()
                 }
-                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                Intent.ACTION_SCREEN_ON -> {
+                    checkBubbleVisibilityNow()
+                    // Kiosk mode's own wake-lock cover (see showKioskLockCover below) - shows the
+                    // moment the screen wakes, requires a real fingerprint to dismiss into
+                    // whatever's actually pinned underneath. User's own words: "when i open the
+                    // screen it should display our design... it would ask for my fingerprint to
+                    // enter our home screen."
+                    if (getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("kiosk_mode_enabled", false)) {
+                        showKioskLockCover()
+                    }
+                }
+                Intent.ACTION_USER_PRESENT -> {
                     checkBubbleVisibilityNow()
                 }
             }
@@ -327,6 +380,12 @@ class ScifiAccessibilityService : AccessibilityService() {
     private var bubbleView: BubbleView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
     private var lastForegroundPkg: String? = null
+
+    // Public read-only view of the above - lets a caller (HandGestureService's nod/shake
+    // confirmation dispatch) check "is our own app actually in front right now" without needing
+    // to force it there, so a nod/shake made while using some other app doesn't unexpectedly
+    // yank the user back to the launcher.
+    val currentForegroundPackage: String? get() = lastForegroundPkg
     private var speechRecognizer: SpeechRecognizer? = null
     private var mediaFocusHandle: Any? = null
     private var bubbleTts: TextToSpeech? = null
@@ -820,12 +879,31 @@ class ScifiAccessibilityService : AccessibilityService() {
     }
 
     private fun handleSpokenText(text: String) {
-        android.util.Log.d("EleneBubble", "Heard: \"$text\"")
+        if (BuildConfig.DEBUG) android.util.Log.d("EleneBubble", "Heard: \"$text\"")
         if (isStopListeningPhrase(text)) {
             stopListening()
             return
         }
         setBubbleState(EleneBubbleState.REPLYING)
+
+        // Most of what gets heard is a known device command, not something that needs the AI to
+        // interpret - see LocalCommandMatcher's own doc. When it confidently matches, run it
+        // straight away with no backend round-trip at all; the same voice-ID gate still applies
+        // since this is still a real device action, just recognized locally instead of by Elene.
+        val localCommand = LocalCommandMatcher.match(text)
+        if (localCommand != null) {
+            if (BuildConfig.DEBUG) android.util.Log.d("EleneBubble", "Local match: \"$text\" -> $localCommand")
+            bubbleServiceScope.launch {
+                if (!voiceIdAllowsCommand(text)) {
+                    speakOut("Voice unrecognized.")
+                    return@launch
+                }
+                handleOverlayCommand(localCommand)
+                retryListeningSoon(0)
+            }
+            return
+        }
+
         bubbleServiceScope.launch {
             // Same user id as the home-screen assistant - was "device_user" here vs
             // "launcher-user" there, meaning they had two entirely separate conversation
@@ -908,7 +986,7 @@ class ScifiAccessibilityService : AccessibilityService() {
             // call, a mic recording) that no longer have to happen back-to-back.
             val voiceCheckDeferred = async { voiceIdAllowsCommand(text) }
             val response = EleneApiClient.sendText(userId = "launcher-user", text = text, context = ctxMap)
-            android.util.Log.d("EleneBubble", "Response: reply=\"${response?.reply}\" commands=${response?.commands} intent=\"${response?.intent}\"")
+            if (BuildConfig.DEBUG) android.util.Log.d("EleneBubble", "Response: reply=\"${response?.reply}\" commands=${response?.commands} intent=\"${response?.intent}\"")
             if (response == null) {
                 voiceCheckDeferred.cancel()
                 speakOut("I couldn't reach my backend just now.")
@@ -960,7 +1038,7 @@ class ScifiAccessibilityService : AccessibilityService() {
             val sample = recordVoiceSample(this@ScifiAccessibilityService) ?: return true
             val best = VoiceIdManager.verifyBest(this@ScifiAccessibilityService, sample) ?: return true
             val (style, score) = best
-            android.util.Log.d("EleneVoiceID", "heard=\"$heard\" style=${style.name} similarity=$score")
+            if (BuildConfig.DEBUG) android.util.Log.d("EleneVoiceID", "heard=\"$heard\" style=${style.name} similarity=$score")
             val passed = score >= style.threshold
             VoiceIdConfidenceLog.record(this@ScifiAccessibilityService, style, score, passed)
             return passed
@@ -1095,7 +1173,7 @@ class ScifiAccessibilityService : AccessibilityService() {
         val parts = command.split(":", limit = 2)
         val verb = parts[0]
         val arg = parts.getOrNull(1)
-        android.util.Log.d("EleneBubble", "Command verb=\"$verb\" arg=\"$arg\"")
+        if (BuildConfig.DEBUG) android.util.Log.d("EleneBubble", "Command verb=\"$verb\" arg=\"$arg\"")
         val handled = when (verb) {
             "stop_listening" -> { stopListening(); true }
             "open_app" -> arg != null && openAppByLabel(arg)
@@ -1707,6 +1785,42 @@ class ScifiAccessibilityService : AccessibilityService() {
         return dispatchGesture(gesture, null, null)
     }
 
+    /** Real two-finger pinch, for HandGestureService's in-air pinch gesture - two simultaneous
+     * strokes moving together (zoom in) or apart (zoom out) around the screen center, the same
+     * shape a real on-screen pinch takes, not a single-point substitute. */
+    fun pinchZoom(zoomIn: Boolean, durationMs: Long = 250): Boolean {
+        val metrics = resources.displayMetrics
+        val centerX = metrics.widthPixels / 2f
+        val centerY = metrics.heightPixels / 2f
+        val nearRadius = metrics.widthPixels * 0.08f
+        val farRadius = metrics.widthPixels * 0.28f
+        val startRadius = if (zoomIn) nearRadius else farRadius
+        val endRadius = if (zoomIn) farRadius else nearRadius
+
+        // DELIBERATE CHOICE (confirmed with the user, not an oversight - if this gets "fixed"
+        // back to a symmetric two-finger pinch, it will reintroduce a confirmed bug): a symmetric
+        // pinch keeps our own Globe's OrbitControls happy (no unwanted pan), but Google Maps'
+        // rotate-gesture detector reliably misreads that exact same symmetric motion as a
+        // rotation instead of a zoom (confirmed via logcat + on-device testing). Single-anchor -
+        // one finger completely stationary, only the other moves - fixes Maps; the tradeoff is
+        // our own Globe may pan/drift slightly during a gesture-triggered zoom. Maps correctness
+        // was chosen over Globe correctness since Maps is real-world-facing and the Globe is our
+        // own code we can special-case or tolerate.
+        val anchorPath = Path().apply {
+            moveTo(centerX - startRadius, centerY)
+            lineTo(centerX - startRadius, centerY)
+        }
+        val movingPath = Path().apply {
+            moveTo(centerX + startRadius, centerY)
+            lineTo(centerX + endRadius, centerY)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(anchorPath, 0, durationMs))
+            .addStroke(GestureDescription.StrokeDescription(movingPath, 0, durationMs))
+            .build()
+        return dispatchGesture(gesture, null, null)
+    }
+
     // ---- Screen understanding: describe / click / highlight ----
 
     /** Short summary of the visible text on the current screen, for Elene's context. */
@@ -1864,6 +1978,51 @@ class ScifiAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Explicit show/hide pair (as opposed to toggleHidePage's flip) - smile/mouth-open are two
+     * distinct face gestures now (HandGestureService.checkSmile/checkMouthOpen), not one toggle,
+     * so each needs to drive one direction only and no-op if already in that state (smiling twice
+     * in a row shouldn't un-hide). */
+    fun activateHidePage() {
+        if (hideOverlayView == null) showHideOverlay()
+    }
+
+    fun deactivateHidePage() {
+        if (hideOverlayView != null) removeHideOverlay()
+    }
+
+    /** Renders the exact same green root + glitch-text design as the hide-screen cover into a
+     * static bitmap sized to the display, and sets it as the LOCK SCREEN wallpaper only
+     * (FLAG_LOCK) - the home screen wallpaper is left untouched. User asked for this directly
+     * after seeing the live hide-screen cover. Deliberately a single frozen frame, not animated:
+     * Android's actual lock screen only renders a static wallpaper image, it doesn't host
+     * arbitrary live Views - a truly animated lock screen would mean building a full Live
+     * Wallpaper Service (a real separate system component), which is a much bigger thing than
+     * "make this design my lock screen" was asking for. Reuses GlitchCoverView's own onDraw
+     * directly (measure+layout+draw into an offscreen Canvas) rather than duplicating the
+     * root/text drawing logic in a second place. */
+    fun setGlitchDesignAsLockWallpaper(): Boolean = runCatching {
+        val metrics = resources.displayMetrics
+        val w = metrics.widthPixels
+        val h = metrics.heightPixels
+        val bitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val view = GlitchCoverView(this)
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY)
+        )
+        view.layout(0, 0, w, h)
+        view.draw(canvas)
+
+        val wallpaperManager = android.app.WallpaperManager.getInstance(this)
+        wallpaperManager.setBitmap(bitmap, null, true, android.app.WallpaperManager.FLAG_LOCK)
+        bitmap.recycle()
+        true
+    }.getOrElse {
+        android.util.Log.e("ScifiAccessibilityService", "Failed to set lock screen wallpaper", it)
+        false
+    }
+
     private fun showHideOverlay() {
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val view = GlitchCoverView(this)
@@ -1884,6 +2043,103 @@ class ScifiAccessibilityService : AccessibilityService() {
             (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view)
         }
     }
+
+    // ---- Kiosk wake-lock cover: VEINS-style GlitchCoverView, requires a real fingerprint to
+    // dismiss - see the ACTION_SCREEN_ON hook above for when this shows. ----
+
+    private var kioskLockOverlayView: View? = null
+
+    /** Shown the instant the screen wakes while kiosk mode is on; tapping it (or it appearing at
+     * all) triggers a real fingerprint prompt via BiometricAuthActivity - success calls
+     * dismissKioskLockCover() below (same "call back into the service directly" pattern
+     * MotionTheftDetector.onConfirmed already uses), failure/cancel just leaves the cover up,
+     * tappable again to retry. FLAG_NOT_TOUCHABLE removed here on purpose (unlike hideOverlayView
+     * above) - this one needs real taps. */
+    fun showKioskLockCover() {
+        if (kioskLockOverlayView != null) {
+            triggerKioskFingerprintPrompt()
+            return
+        }
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val view = GlitchCoverView(this, CoverStyle.VEINS).apply {
+            setOnClickListener { triggerKioskFingerprintPrompt() }
+            isClickable = true
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        runCatching { wm.addView(view, params) }.onSuccess {
+            kioskLockOverlayView = view
+            triggerKioskFingerprintPrompt()
+        }
+    }
+
+    fun dismissKioskLockCover() {
+        val view = kioskLockOverlayView ?: return
+        kioskLockOverlayView = null
+        runCatching {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view)
+        }
+    }
+
+    private fun triggerKioskFingerprintPrompt() {
+        runCatching {
+            startActivity(
+                Intent(this, BiometricAuthActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    putExtra(BiometricAuthActivity.EXTRA_TITLE, "Kiosk Locked")
+                    putExtra(BiometricAuthActivity.EXTRA_SUBTITLE, "Fingerprint required to continue")
+                    putExtra(BiometricAuthActivity.EXTRA_REASON, BiometricAuthActivity.REASON_KIOSK_UNLOCK)
+                }
+            )
+        }
+    }
+
+    // ---- Gesture skeleton preview: small always-on-top view of the tracked hand while
+    // HandGestureService is running, so misfires/misses are visible in real time instead of
+    // only findable after the fact in logcat ----
+
+    fun showSkeletonOverlay() {
+        if (skeletonOverlayView != null) return
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val sizePx = (140 * resources.displayMetrics.density).toInt()
+        val view = HandSkeletonOverlayView(this, currentThemeColorArgb())
+        val params = WindowManager.LayoutParams(
+            sizePx,
+            sizePx,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            x = (12 * resources.displayMetrics.density).toInt()
+            y = (96 * resources.displayMetrics.density).toInt()
+        }
+        runCatching { wm.addView(view, params) }.onSuccess { skeletonOverlayView = view }
+    }
+
+    fun hideSkeletonOverlay() {
+        val view = skeletonOverlayView ?: return
+        skeletonOverlayView = null
+        runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view) }
+    }
+
+    /** Split into two independent setters (was one combined function taking both) - hand and
+     * face results arrive from separate MediaPipe callbacks on separate schedules (hand every
+     * frame, face throttled to every Nth), so a combined call would have whichever one fires
+     * less often intermittently null out the other's already-current display. */
+    fun updateHandSkeleton(points: FloatArray?) {
+        skeletonOverlayView?.handLandmarks = points
+    }
+
+    fun updateFaceSkeleton(points: FloatArray?) {
+        skeletonOverlayView?.faceLandmarks = points
+    }
+
 }
 
 /** Mirrors the launcher's own two real Elene looks (see the bubbleVisible/bubbleColor logic
@@ -2010,17 +2266,70 @@ private class BubbleTouchListener(
     }
 }
 
-/** Animated static/scanline glitch cover, matching the launcher's visual style. */
-private class GlitchCoverView(context: android.content.Context) : View(context) {
-    private val paint = Paint()
+/** ROOTS: the original hide-screen/lock-wallpaper look - green, branches frame all four edges,
+ * label "XENOS". ROOTS_RED: same edge-framing branch geometry as ROOTS, recolored red - used as
+ * WelcomeFaceSkeleton's face-detected background (user: "when face is showing the background
+ * shouldnt be lack[black] let it be roots just like our hide screen... but red instead"). VEINS:
+ * the kiosk wake-lock cover (see ScifiAccessibilityService.showKioskLockCover) - blood-red,
+ * branches drip downward from the top edge only with small droplet tips, occasional white-hot
+ * flashes along a segment on top of the normal pulse (an electric current traveling through a
+ * vein, user's own words), label "HACKER XENOS". */
+enum class CoverStyle(val label: String, val lineColor: Int, val isVeins: Boolean, val showLabel: Boolean = true) {
+    ROOTS("XENOS", Color.GREEN, false),
+    // No label - this backs WelcomeFaceSkeleton's face-detected state, where the live skeleton
+    // itself is the focal point. User: "why is the name xenos there" - just the branch pattern.
+    ROOTS_RED("XENOS", 0xFFCC0000.toInt(), false, showLabel = false),
+    VEINS("HACKER XENOS", 0xFFCC0000.toInt(), true)
+}
+
+/** Privacy cover - black background, a circuit/vein pattern (generated once per size, not
+ * re-randomized every frame - a real branch doesn't move, but pulses in brightness on a rhythmic
+ * wave), and a glitch-sliced/drifting label across the center. See CoverStyle above for the two
+ * looks this renders. User asked for this in place of the original random RGB scanline-bar look
+ * ("make it a glitch of my name Xenos with green roots around the background"). Not private -
+ * WelcomeFaceSkeleton.kt embeds it (CoverStyle.ROOTS_RED) via AndroidView as its face-detected
+ * background. */
+class GlitchCoverView(context: android.content.Context, private val coverStyle: CoverStyle = CoverStyle.ROOTS) : View(context) {
+    private val rootPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = coverStyle.lineColor
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val dropPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = coverStyle.lineColor
+        style = Paint.Style.FILL
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = coverStyle.lineColor
+        typeface = Typeface.MONOSPACE
+        style = Paint.Style.FILL
+        textAlign = Paint.Align.CENTER
+    }
+    // Green/black for ROOTS, red/black for ROOTS_RED and VEINS (plus occasional white sparks
+    // drawn separately in onDraw's pulse loop) - no cyan/magenta channel-split either way, per
+    // user request. Keyed off color theme (not isVeins) so ROOTS_RED's edge-framing geometry
+    // still gets the red glitch palette, not ROOTS's green one.
+    private val glitchTextColors = if (coverStyle != CoverStyle.ROOTS) {
+        intArrayOf(coverStyle.lineColor, 0xFFFF3333.toInt(), 0xFF330000.toInt(), Color.BLACK)
+    } else {
+        intArrayOf(coverStyle.lineColor, 0xFF00FF66.toInt(), 0xFF003300.toInt(), Color.BLACK)
+    }
     private val random = Random(System.currentTimeMillis())
-    private val glitchColors = intArrayOf(Color.CYAN, Color.MAGENTA, Color.GREEN)
-    private val sliceHeight = 14
+    private val label = coverStyle.label
+
+    private data class RootSegment(
+        val x1: Float, val y1: Float, val x2: Float, val y2: Float,
+        val strokeWidth: Float, val baseAlpha: Int, val isTip: Boolean
+    )
+    private val rootSegments = mutableListOf<RootSegment>()
+    private var rootsBuiltForW = -1
+    private var rootsBuiltForH = -1
+    private val startTimeMs = System.currentTimeMillis()
 
     private val refreshRunnable: Runnable = object : Runnable {
         override fun run() {
             invalidate()
-            postDelayed(this, 90L)
+            postDelayed(this, 50L)
         }
     }
 
@@ -2034,21 +2343,308 @@ private class GlitchCoverView(context: android.content.Context) : View(context) 
         super.onDetachedFromWindow()
     }
 
+    /** Recursive branch generator, called once per real size change (not per frame). ROOTS grow
+     * inward from all four edges so the pattern frames the whole screen. VEINS start only along
+     * the top edge and lean downward each generation (gravityBias grows with depth) for a real
+     * dripping-down look, not a symmetric frame. */
+    private fun buildRoots(w: Int, h: Int) {
+        rootSegments.clear()
+        val rng = Random(System.currentTimeMillis())
+        if (coverStyle.isVeins) {
+            // Based on height, not minOf(w,h) - a portrait phone screen is much taller than it is
+            // wide, and the old minOf(w,h) basis made drips reach only ~20% of the way down. 8
+            // generations at a slower per-generation shrink (see branch()'s isVeins branch below)
+            // gets real vein length spanning most of the screen, not stopping near the top.
+            // Fewer, wider-spaced starts (7, not 9) so the top doesn't look "squeezed together" -
+            // real forking now happens from the very first split (wide initial spread below),
+            // not just clustering into short twigs near the tips like the first version did.
+            val starts = (0 until 7).map { i -> Triple(w * (0.08f + i * 0.14f), 0f, 90f) }
+            val startLength = h * 0.22f
+            for ((x, y, angle) in starts) {
+                branch(x, y, angle + rng.nextFloat() * 20f - 10f, startLength, 8, rng, gravityBias = 0f)
+            }
+        } else {
+            val starts = buildList {
+                for (i in 0 until 4) add(Triple(w * (0.15f + i * 0.23f), h.toFloat(), -90f))   // bottom, growing up
+                for (i in 0 until 3) add(Triple(w * (0.2f + i * 0.3f), 0f, 90f))               // top, growing down
+                for (i in 0 until 3) add(Triple(0f, h * (0.25f + i * 0.25f), 0f))              // left, growing right
+                for (i in 0 until 3) add(Triple(w.toFloat(), h * (0.25f + i * 0.25f), 180f))   // right, growing left
+            }
+            val startLength = minOf(w, h) * 0.16f
+            for ((x, y, angle) in starts) {
+                branch(x, y, angle + rng.nextFloat() * 20f - 10f, startLength, 6, rng, gravityBias = 0f)
+            }
+        }
+    }
+
+    private fun branch(x: Float, y: Float, angleDeg: Float, length: Float, depth: Int, rng: Random, gravityBias: Float) {
+        if (depth <= 0 || length < 10f) return
+        val angleRad = Math.toRadians(angleDeg.toDouble())
+        val x2 = x + length * kotlin.math.cos(angleRad).toFloat()
+        val y2 = y + length * kotlin.math.sin(angleRad).toFloat()
+        val isTip = coverStyle.isVeins && depth == 1
+        rootSegments.add(
+            RootSegment(x, y, x2, y2, (depth * 0.8f).coerceAtLeast(1.5f), (70 + depth * 18).coerceAtMost(200), isTip)
+        )
+        // Real veins fork right from the start, not just once they're already thin near the
+        // tips (user's own report after seeing the first version live: "i thought they branch to
+        // different places immediately... rather than just a straight bent line and then start
+        // spreading at the bottom"). Higher split odds than before (0.78 vs 0.65).
+        val branchCount = if (rng.nextFloat() < 0.78f) 2 else 1
+        repeat(branchCount) {
+            if (coverStyle.isVeins) {
+                // Wide spread (was +-15, now +-25) so a fork is visibly two different directions
+                // immediately, not two near-parallel lines that only look distinct once they've
+                // drifted apart several generations later. Gravity pull is gentler and caps
+                // lower (was max 60 pulling at up to 30%, now max 35 pulling at up to ~17%) so it
+                // nudges the overall flow downward without erasing that early spread back into a
+                // tight, "squeezed together" bundle.
+                val nextGravity = (gravityBias + 7f).coerceAtMost(35f)
+                val spread = rng.nextFloat() * 50f - 25f
+                val pulledAngle = angleDeg + spread + (90f - angleDeg) * (nextGravity / 200f)
+                // Slower shrink than ROOTS (0.78-0.9 vs roots' 0.65-0.83) - a drip should keep
+                // reaching, not taper off after a couple generations.
+                branch(x2, y2, pulledAngle, length * (0.78f + rng.nextFloat() * 0.12f), depth - 1, rng, nextGravity)
+            } else {
+                val spread = rng.nextFloat() * 55f - 27f
+                branch(x2, y2, angleDeg + spread, length * (0.65f + rng.nextFloat() * 0.18f), depth - 1, rng, 0f)
+            }
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
-        var y = 0
-        while (y < height) {
-            paint.color = glitchColors[random.nextInt(glitchColors.size)]
-            paint.alpha = random.nextInt(60, 180)
-            val xOffset = random.nextInt(-40, 40)
-            canvas.drawRect(
-                xOffset.toFloat(),
-                y.toFloat(),
-                (width + xOffset).toFloat(),
-                (y + sliceHeight).toFloat(),
-                paint
-            )
-            y += sliceHeight
+
+        if (width != rootsBuiltForW || height != rootsBuiltForH) {
+            rootsBuiltForW = width
+            rootsBuiltForH = height
+            if (width > 0 && height > 0) buildRoots(width, height)
         }
+
+        // Static shape (real roots don't move), but alive-looking: a smooth rhythmic brightness
+        // pulse (sin wave, ~1.8s period) plus the small random glitch-flicker on top. Each
+        // segment's pulse is phase-shifted by its own baseAlpha (which tracks branch depth), so
+        // the pulse reads as travelling outward along the branches rather than the whole pattern
+        // blinking in unison - user asked for the roots to "pulse".
+        val elapsedMs = System.currentTimeMillis() - startTimeMs
+        rootPaint.color = coverStyle.lineColor
+        for (segment in rootSegments) {
+            val pulse = (kotlin.math.sin(elapsedMs / 900.0 + segment.baseAlpha * 0.03) * 0.4 + 0.6).toFloat()
+            val flicker = if (random.nextFloat() < 0.06f) random.nextInt(-40, 40) else 0
+            rootPaint.strokeWidth = segment.strokeWidth
+            rootPaint.alpha = ((segment.baseAlpha * pulse).toInt() + flicker).coerceIn(20, 255)
+            canvas.drawLine(segment.x1, segment.y1, segment.x2, segment.y2, rootPaint)
+            // Blood droplet at vein tips - a small filled circle, brighter than the line itself.
+            if (segment.isTip) {
+                dropPaint.color = coverStyle.lineColor
+                dropPaint.alpha = rootPaint.alpha
+                canvas.drawCircle(segment.x2, segment.y2, segment.strokeWidth * 1.6f, dropPaint)
+            }
+        }
+
+        // VEINS: an electric current traveling through - small white particle dots riding along
+        // a few random segments each tick, not a whole segment flashing white (user: "small
+        // particles rather than a long white colour moving fast"). Position along the segment is
+        // time-based so each particle visibly slides rather than just blinking in place.
+        if (coverStyle.isVeins && rootSegments.isNotEmpty()) {
+            dropPaint.color = Color.WHITE
+            repeat(3) {
+                if (random.nextFloat() < 0.5f) {
+                    val segment = rootSegments[random.nextInt(rootSegments.size)]
+                    val t = ((elapsedMs + it * 137L) / 260.0 % 1.0).toFloat()
+                    val sparkX = segment.x1 + (segment.x2 - segment.x1) * t
+                    val sparkY = segment.y1 + (segment.y2 - segment.y1) * t
+                    dropPaint.alpha = 230
+                    canvas.drawCircle(sparkX, sparkY, 2.5f, dropPaint)
+                }
+            }
+        }
+
+        if (coverStyle.showLabel) {
+            // "XENOS" - a slow continuous drift (real movement, not just per-band jitter) plus a
+            // ghost pass (bright-green/near-black copies offset from the main text, same "broken
+            // signal" double-vision look as a chromatic-aberration split, but green/black only per
+            // user request - no cyan/magenta) underneath the sliced glitch bands.
+            // Scaled inversely with label length so "HACKER XENOS" (VEINS) doesn't overflow the
+            // width the way a fixed size tuned only for "XENOS" (5 chars) would.
+            textPaint.textSize = width * (0.8f / label.length).coerceAtMost(0.16f)
+            val fm = textPaint.fontMetrics
+            val elapsed = System.currentTimeMillis() - startTimeMs
+            val driftX = (kotlin.math.sin(elapsed / 650.0) * 10f).toFloat()
+            val driftY = (kotlin.math.sin(elapsed / 420.0 + 1.3) * 6f).toFloat()
+            // A big jump every so often on top of the slow drift, for a real "glitch cut" moment.
+            val bigJumpX = if (random.nextFloat() < 0.08f) random.nextInt(-30, 30) else 0
+            val centerX = width / 2f + driftX + bigJumpX
+            val baseline = height / 2f - (fm.ascent + fm.descent) / 2f + driftY
+
+            val ghostOffset = 6f + random.nextFloat() * 6f
+            textPaint.color = if (coverStyle != CoverStyle.ROOTS) 0xFFFF5555.toInt() else 0xFF00FF66.toInt()
+            textPaint.alpha = 140
+            canvas.drawText(label, centerX - ghostOffset, baseline, textPaint)
+            textPaint.color = Color.BLACK
+            textPaint.alpha = 180
+            canvas.drawText(label, centerX + ghostOffset, baseline, textPaint)
+            textPaint.alpha = 255
+
+            val sliceHeight = 10
+            var y = baseline + fm.ascent
+            val bottom = baseline + fm.descent
+            while (y < bottom) {
+                val jitterX = if (random.nextFloat() < 0.3f) random.nextInt(-22, 22) else 0
+                textPaint.color = glitchTextColors[random.nextInt(glitchTextColors.size)]
+                canvas.save()
+                canvas.clipRect(0f, y, width.toFloat(), y + sliceHeight)
+                canvas.drawText(label, centerX + jitterX, baseline, textPaint)
+                canvas.restore()
+                y += sliceHeight
+            }
+        }
+    }
+}
+
+/** Small live preview of whatever HandGestureService/FaceGestureService currently track - a
+ * hand's 21-point skeleton (drawn as connected bones, mirrored like a selfie preview) and/or a
+ * face's landmark cloud (drawn as plain dots - MediaPipe's face mesh is ~478 points, far too
+ * dense to draw as connected lines at this size and still be readable). Plain Canvas, not
+ * Compose, for the same reason as BubbleView/GlitchCoverView above - this has to render as a
+ * WindowManager overlay outside any Activity. */
+private class HandSkeletonOverlayView(context: android.content.Context, themeColorArgb: Int) : View(context) {
+    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(170, 0, 0, 0) }
+    private val bonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = themeColorArgb
+        strokeWidth = 4f
+        style = Paint.Style.STROKE
+    }
+    private val jointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val facePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = themeColorArgb; alpha = 200 }
+
+    // Flat (x,y,z) triples per landmark (MediaPipe's normalized [0,1] x/y plus its own relative-
+    // depth z estimate), or null when nothing is currently tracked. Display-only - the live
+    // recognizer in HandGestureService reads raw x()/y() directly and never touches this array.
+    @Volatile var handLandmarks: FloatArray? = null
+        set(value) { field = value; postInvalidate() }
+    @Volatile var faceLandmarks: FloatArray? = null
+        set(value) { field = value; postInvalidate() }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        canvas.drawRoundRect(0f, 0f, w, h, 20f, 20f, bgPaint)
+
+        faceLandmarks?.let { face ->
+            // Same axis-swap + vertical-flip correction as the hand skeleton below - face
+            // landmarks come from the identical camera/rotation pipeline (same ImageAnalysis
+            // frames, same setTargetRotation), so the same raw-coordinate quirk applies here too.
+            // Applied preemptively rather than waiting to rediscover it live.
+            for (i in face.indices step 2) {
+                canvas.drawCircle((1f - face[i + 1]) * w, (1f - face[i]) * h, 1.6f, facePaint)
+            }
+        }
+
+        handLandmarks?.let { hand ->
+            if (hand.size < 63) return@let
+            // Raw landmark positions, not the stabilized palm-frame projection below - a live
+            // test proved that version hides real orientation changes (flip the hand upside down
+            // or face it sideways and the stabilized render didn't change at all, since it's
+            // deliberately hand-relative). This overlay's whole job is showing the truth of what
+            // the camera tracks, so truth wins over a nicer-looking but misleading render -
+            // confirmed with Codex in combination.md before reverting.
+            // Axis-swapped (not just mirrored - the observed error was a 90°-per-physical-turn
+            // rotation, i.e. an axis swap) plus a vertical flip (the axis-swap-only version
+            // rendered upside down). Recognition isn't touched by this (still reads raw
+            // x()/y() directly in HandGestureService) - isolated to the display-only overlay.
+            fun px(i: Int) = (1f - hand[i * 3 + 1]) * w
+            fun py(i: Int) = (1f - hand[i * 3]) * h
+            fun pz(i: Int) = hand[i * 3 + 2]
+            for ((a, b) in HAND_CONNECTIONS) {
+                canvas.drawLine(px(a), py(a), px(b), py(b), bonePaint)
+            }
+            for (i in 0 until 21) {
+                // Rough first-pass depth cue (MediaPipe's z is smaller/more negative closer to
+                // the camera) - the scale factor is an eyeballed heuristic, first thing to
+                // retune if it looks off.
+                val depthRadius = (5f - pz(i) * 40f).coerceIn(2.5f, 9f)
+                canvas.drawCircle(px(i), py(i), depthRadius, jointPaint)
+            }
+        }
+    }
+
+    /** Projects the 21 raw (x,y,z) landmarks into a stable palm-local coordinate frame (origin =
+     * wrist, X = pinky-MCP→index-MCP across the palm, Y = wrist→middle-MCP up the palm, Z = palm
+     * normal via X×Y) - NOT currently used for the live diagnostic overlay (see onDraw above,
+     * reverted to raw landmarks after live testing showed this hides real orientation changes).
+     * Kept isolated here rather than deleted: a future rigged 3D hand *model* would genuinely
+     * want this canonical, bind-pose-relative frame, unlike a live debug view which needs to
+     * show the truth. Returns (x,y,z) triples in screen pixels (z pre-scaled, for depth-cue
+     * rendering), front-facing and stable regardless of how the real hand is tilted/rotated. */
+    private fun projectFrontFacingHand(points: FloatArray, width: Float, height: Float): FloatArray {
+        if (points.size < 63) return FloatArray(63)
+
+        fun landmark(i: Int) = Triple(points[i * 3], points[i * 3 + 1], points[i * 3 + 2])
+        fun sub(a: Triple<Float, Float, Float>, b: Triple<Float, Float, Float>) =
+            Triple(a.first - b.first, a.second - b.second, a.third - b.third)
+        fun dot(a: Triple<Float, Float, Float>, b: Triple<Float, Float, Float>) =
+            a.first * b.first + a.second * b.second + a.third * b.third
+        fun cross(a: Triple<Float, Float, Float>, b: Triple<Float, Float, Float>) = Triple(
+            a.second * b.third - a.third * b.second,
+            a.third * b.first - a.first * b.third,
+            a.first * b.second - a.second * b.first
+        )
+        fun norm(a: Triple<Float, Float, Float>): Triple<Float, Float, Float> {
+            val len = kotlin.math.sqrt(dot(a, a)).coerceAtLeast(1e-6f)
+            return Triple(a.first / len, a.second / len, a.third / len)
+        }
+
+        val wrist = landmark(0)
+        val xAxis = norm(sub(landmark(17), landmark(5))) // pinky MCP -> index MCP, across palm
+        val yRaw = norm(sub(landmark(9), wrist)) // wrist -> middle MCP, up the palm
+        val zAxis = norm(cross(xAxis, yRaw)) // palm normal
+        val yAxis = norm(cross(zAxis, xAxis)) // re-orthogonalize
+
+        val local = FloatArray(63)
+        var minX = Float.POSITIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+        for (i in 0 until 21) {
+            val p = sub(landmark(i), wrist)
+            val lx = dot(p, xAxis)
+            val ly = dot(p, yAxis)
+            local[i * 3] = lx
+            local[i * 3 + 1] = ly
+            local[i * 3 + 2] = dot(p, zAxis)
+            minX = min(minX, lx); maxX = max(maxX, lx)
+            minY = min(minY, ly); maxY = max(maxY, ly)
+        }
+
+        val boundsW = (maxX - minX).coerceAtLeast(1e-4f)
+        val boundsH = (maxY - minY).coerceAtLeast(1e-4f)
+        val scale = min(width * 0.72f / boundsW, height * 0.72f / boundsH)
+        val centerX = (minX + maxX) / 2f
+        val centerY = (minY + maxY) / 2f
+
+        val out = FloatArray(63)
+        for (i in 0 until 21) {
+            // Mirror x so the overlay behaves like the front-camera view the user expects; flip
+            // y since "up the palm" should point toward the top of the preview but screen y
+            // grows downward.
+            out[i * 3] = width / 2f - (local[i * 3] - centerX) * scale
+            out[i * 3 + 1] = height / 2f - (local[i * 3 + 1] - centerY) * scale
+            out[i * 3 + 2] = local[i * 3 + 2] * scale
+        }
+        return out
+    }
+
+    companion object {
+        // MediaPipe's standard 21-point hand skeleton: thumb, index, middle, ring, pinky chains
+        // off the wrist, plus the palm base connecting them.
+        private val HAND_CONNECTIONS = listOf(
+            0 to 1, 1 to 2, 2 to 3, 3 to 4,
+            0 to 5, 5 to 6, 6 to 7, 7 to 8,
+            5 to 9, 9 to 10, 10 to 11, 11 to 12,
+            9 to 13, 13 to 14, 14 to 15, 15 to 16,
+            13 to 17, 17 to 18, 18 to 19, 19 to 20,
+            0 to 17
+        )
     }
 }

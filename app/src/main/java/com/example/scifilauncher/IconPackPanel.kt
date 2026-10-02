@@ -49,7 +49,7 @@ fun IconPackPanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp)
-                    .verticalScroll(rememberScrollState())
+                    .heightIn(max = 480.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -106,6 +106,11 @@ fun IconPackPanel(
                         }
                 )
 
+                // Header (back/title/save + intro text) above stays fixed; only the pack list
+                // below scrolls - matters once someone has enough icon packs installed that the
+                // list alone would push SAVE off-screen.
+                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+
                 // "Normal" always comes first - null package name means the real, unthemed icon.
                 Row(
                     modifier = Modifier
@@ -157,6 +162,7 @@ fun IconPackPanel(
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
+                }
             }
         }
     }

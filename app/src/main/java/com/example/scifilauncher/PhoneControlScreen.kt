@@ -81,7 +81,7 @@ class PhoneControlClient(private val token: String) {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                android.util.Log.d("PhoneControlClient", "WS text: $text")
+                if (BuildConfig.DEBUG) android.util.Log.d("PhoneControlClient", "WS text: $text")
                 runCatching {
                     when (JSONObject(text).optString("type")) {
                         "agent_connected" -> onState?.invoke(PhoneControlConnState.CONNECTED)
@@ -93,7 +93,7 @@ class PhoneControlClient(private val token: String) {
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 val bytesArray = bytes.toByteArray()
                 val bmp = runCatching { BitmapFactory.decodeByteArray(bytesArray, 0, bytesArray.size) }.getOrNull()
-                android.util.Log.d("PhoneControlClient", "WS bytes: ${bytesArray.size}, decoded=${bmp != null}")
+                if (BuildConfig.DEBUG) android.util.Log.d("PhoneControlClient", "WS bytes: ${bytesArray.size}, decoded=${bmp != null}")
                 if (bmp != null) onFrame?.invoke(bmp)
             }
 

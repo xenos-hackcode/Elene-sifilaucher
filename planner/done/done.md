@@ -1,5 +1,175 @@
 # Done (built + installed, not all confirmed working yet - see experience/)
 
+## Tracker/ad blocker + VPN feature pass (2026-09-25)
+
+Fixed a real bug where toggling tracker & ad blocking off didn't actually stop it until a full
+phone restart - root cause: `Context.stopService()` doesn't reliably tear down a `VpnService`
+because the OS's own VPN framework holds an independent binding to it. Fixed with a self-stop
+pattern (`TrackerBlockVpnService.ACTION_STOP`, service stops itself from inside its own
+`onStartCommand`). Also added, in order: DNS-over-HTTPS (Cloudflare/Google, falls back to
+plaintext UDP:53 only if DoH itself fails), a real WireGuard VPN client (`VpnClientActivity`,
+`WireGuardVpnManager`, `VpnConfigStore` - user adds their own trusted server configs, no bundled
+"free" servers, per a real security concern raised and accepted), a "PROTECTION STATUS" summary
+row on the Security screen, a one-tap AdAway blocklist updater (`TrackerBlocklistUpdater`), a
+"Blocked today" counter (`TrackerBlockStats`), and per-app tracker exceptions
+(`TrackerExceptionsStore` + `TrackerExceptionsActivity`, backed by
+`VpnService.Builder.addDisallowedApplication` - a real per-app VPN exclusion, not a per-domain
+one, since the DNS sinkhole has no reliable way to attribute a query to the app that made it).
+
+Also hit and resolved a real, extended Kotlin/Compose compile-failure scare in `SecurityScreen.kt`
+along the way: a cascading "Unresolved reference"/"not a composable context" error that kept
+relocating to whatever code happened to be textually last in the file, even in git-diff-confirmed
+unchanged blocks. Root cause, confirmed by a `./gradlew clean` rebuild succeeding outright: a
+corrupted incremental Kotlin/Compose-compiler cache, not a real code bug - worth remembering for
+next time this exact symptom (error chases whatever's "last", moves when you disable the current
+suspect, touches code that's provably unchanged) shows up again.
+
+## App Workshop: online-app mode added alongside offline (2026-09-25)
+
+`AppStarterActivity`'s "create an offline app" now also supports a third, online template: the
+user types a single https:// URL at export time, and the exported HTML app can fetch from that
+exact origin only (baked into a `connect-src` CSP allowlist of just that one origin - not `'none'`
+like the two offline templates, but also not unrestricted). Still exports a plain HTML file, not
+an installable APK - see not_started.md for the separate, much bigger "real Android app" ask this
+surfaced.
+
+## Welcome screen: camera-driven eye (replaces face-skeleton), Xenos rename + real face-skeleton +
+## expression system (2026-09-01 to 2026-09-03)
+
+A large, iterative overhaul spanning the WelcomeScreen "XENOS HACKER" replacement and the former
+Reactor chat screen, done across many rounds of live on-device feedback. Grouped by area:
+
+**WelcomeFaceSkeleton -> EyeVisual (`WelcomeFaceSkeleton.kt`)**
+The original live face-skeleton (real MediaPipe dots mirroring the user's actual face) was
+replaced with `EyeVisual` - a red binary-ring medallion eye (jawline-styled dark disk, curved rows
+of binary digits, an eyelid-cropped lens shape, detailed red-toned iris) that is closed by default
+and opens/stares (iris tracking toward wherever a face is detected in frame) only once the front
+camera actually finds one, closing again when it doesn't - not a fixed timer (an earlier "open 1
+min / closed 1 min" version was explicitly reverted per the user's correction). Structural design
+(medallion/arc-rows/lens/iris) proposed by Codex after the user rejected a first, much simpler
+attempt as not matching a reference image; Claude kept the structure but insisted on keeping it
+red rather than Codex's grayscale suggestion, per the user's own standing "make it the same color"
+instruction from before the reference image existed - documented as a real agree/disagree exchange
+in `combination.md`.
+
+**Reactor -> XenosActivity rename + visual (`XenosActivity.kt`, `WelcomeFaceSkeleton.kt`)**
+Internal class/file renamed `ReactorActivity` -> `XenosActivity` (user-facing name was already
+"Xenos") across all reference sites (manifest, MainActivity, HandGestureService,
+NotificationBarPanel, GlobeActivity). Its visual went through two real corrections from the user:
+first wired to `EyeVisual` (wrong - "xenos should be the skelton not the eye"), then to a
+hand-built procedural face-shaped dot skeleton (`XenosSkeleton`, also wrong - "for my face my face
+def doesnt look like that"). Root-caused by finally noticing gesture control's own existing live
+face-mesh preview overlay (`HandSkeletonOverlayView`) already on screen the whole time and using
+it as ground truth: captured one real 478-point MediaPipe sample via a temporary logging hook in
+`HandGestureService.onFaceResult` while gesture control was running, baked those exact real
+coordinates into a new `XenosFaceMesh.kt` (`XENOS_FACE_MESH_RAW`), and rewrote `XenosSkeleton` to
+draw that real shape - deliberately never re-driven by live landmarks even while visible ("the
+skeleton is owned by the ai... only folows it own emotion"), only by Xenos's own talking/expression
+state. `XenosSkeleton` runs its own separate front-camera+FaceLandmarker pipeline purely for
+presence (fades the whole skeleton in/out), which `XenosActivity` uses to gate the mic - real
+mouth-open motion (lower lip drops as one rigid coherent band, not scaled-per-point which
+scrambled into a starburst on the first attempt - confirmed via a real screenshot comparison
+against the gesture-control overlay) and head-turn-toward-you (billboard rotation from the same
+camera's gaze offset) round out the visual.
+
+**Continuous face-gated listening (`XenosActivity.kt`)**
+Tap-to-talk (a modal `ACTION_RECOGNIZE_SPEECH` dialog) replaced with a real back-to-back
+`SpeechRecognizer` loop (same pattern `ScifiAccessibilityService`'s own "Hey Elene" always-
+listening already uses) that runs for as long as a face is visible to Xenos's camera and the mic
+isn't muted - user: "i dont want to click on him to talk i want that as long as the face visible
+he can her me". Paused (not stopped) while Xenos is actually speaking, so it never transcribes its
+own reply back into a new turn. The mic tap is now just a manual "nudge" restart, never required.
+
+**Real Elene voice + emotion system (`XenosActivity.kt`, `WelcomeFaceSkeleton.kt`,
+`EleneApiClient.kt`, `backend/elene/main.py`)**
+Xenos previously spoke replies with the bare on-device system TTS voice; now tries the real
+ElevenLabs-backed voice via `EleneApiClient.fetchTtsAudio` first (same one MainActivity's Elene
+uses), falling back to system TTS only on failure - user: "it using female voice when we already
+have a particular voice we given it". A new `"emotion"` field ("smile"/"frown"/"curious"/
+"neutral") was added to the backend's JSON reply schema, with a new "Your face" system-prompt
+section telling Xenos it has a real visual face on this screen and instructing it to set the field
+to its genuine reaction, not mirror the user's - user: "let it express eemotion like frown or
+curios... let it know he can do that". Client drives `XenosSkeleton`'s mouth-curve (smile/frown)
+and head-tilt (curious) from this real backend signal, replacing an earlier client-only "smile"
+keyword hack. Deployed (revision `elene-backend-00055-nwd`), three real smoke-test cases confirmed
+distinct correct emotions - see `experience/experience.md`.
+
+**Real device-owner/OS quirks discovered this session, worth remembering:**
+- This app (Device Owner + default Home + an active AccessibilityService) cannot be reliably
+  killed via `adb shell am force-stop` or even `am force-stop` - confirmed resistant even while
+  backgrounded, with gesture control's foreground service off. A full `adb reboot` is the only
+  proven-reliable way to get a freshly-installed APK's code to actually load.
+- After a reboot, the device sits at the lock screen (`mDreamingLockscreen=true`) and the
+  launcher's process does not start until it's physically unlocked - `pidof` returns nothing
+  until then.
+
+## Network history de-duplication fix (2026-09-01)
+`NetworkHistory.recordConnection` was deduping by BSSID, so the same named WiFi network
+(re-)appeared as a fresh entry every time it answered from a different radio/band (dual-band
+router 2.4GHz vs 5GHz, band-steering) - user: "if it mentioned once then dont mention again just
+update the lst info". Changed the dedup key to SSID (`bssid` now just tracks "most recently seen
+radio" and updates in place), plus a read-time migration in `loadAll` that collapses any
+already-saved SSID duplicates from before this fix (keeps earliest `firstSeen`, most recent
+`lastSeen`/`bssid`/location) so existing history cleans up automatically without the user needing
+to clear it.
+
+## Touchless gesture control: camera-based hand tracking (2026-08-27)
+User: control the touchscreen without touching it - specifically, swipe up/down/left/right and
+pinch, detected from hand movement in front of the phone, with real device actions actually
+firing (not a demo). Explicitly clarified as camera-based recognition, not a request for exact
+millimeter-precision 3D tracking - confirmed with the user this phone (Galaxy A54) has no
+depth/ToF/radar sensor, so that precision genuinely isn't available on this hardware; camera-based
+discrete gesture *recognition* is, and that's what got built.
+
+**Pipeline**: front camera (CameraX `ImageAnalysis`, `STRATEGY_KEEP_ONLY_LATEST`) -> MediaPipe
+Hand Landmarker (`app/src/main/assets/hand_landmarker.task`, Google's official float16 model,
+~7.8MB, downloaded directly from `storage.googleapis.com/mediapipe-models`) running fully
+on-device in `LIVE_STREAM` mode -> a small heuristic classifier (`HandGestureService.kt`) -> real
+dispatch through `ScifiAccessibilityService`'s existing gesture machinery (the same
+`swipeCoords()` Xenos's own voice commands already use, plus a new `pinchZoom()` - two real
+simultaneous `GestureDescription` strokes, not a single-point stand-in).
+
+**Classifier** (heuristic, not a trained model - deliberately, given only 6 fixed gesture shapes):
+palm-center reference point (average of the wrist + four knuckle landmarks, steadier across a
+fast swipe than tracking one fingertip) tracked over a rolling ~500ms window; net displacement
+past a normalized-distance threshold classifies swipe direction by dominant axis. Pinch: thumb-tip
+to index-tip distance crossing a closed/open threshold pair (with a gap between the two values to
+avoid flicker right at one boundary). A 700ms cooldown after any fired gesture absorbs the
+natural "fingers relax back open right after a pinch" motion so it doesn't double-fire as a
+separate PINCH_OUT.
+
+**Real bug caught before it ever ran**: the raw sensor frame fed into the landmarker is
+unmirrored (unlike a selfie-view preview), so a hand moving toward the phone's physical left
+shows up as *increasing* x, not decreasing - the left/right swipe mapping in `checkSwipe()` is
+deliberately flipped from the naive reading to account for this, with the reasoning left as a
+comment so it doesn't get "fixed" back to the wrong thing later.
+
+**Settings**: Security > Gesture control (new `PanelToggleRow`, mirrors Kiosk mode's pattern
+exactly) - explicit arm/disarm only, never runs silently by default, with an info dialog
+disclosing both the no-depth-sensor hardware limit and the real battery cost of continuous
+camera+ML while armed. CAMERA permission: already silently granted on this Device-Owner install
+(`grantAllDangerousPermissionsSilently`), with a real interactive fallback
+(`gestureControlPermissionLauncher`) for non-Device-Owner installs.
+
+**Status**: builds clean, installs clean, CAMERA permission confirmed granted on-device. NOT yet
+confirmed live - actually waving a hand in front of the camera and watching a real swipe/pinch
+fire hasn't been done yet (device-testing session got interrupted mid-verification: a blind adb
+tap landed inside a live web form the user was filling out on their own phone at the time, not
+inside the launcher - testing was paused rather than risk interfering with that). Next real step:
+arm it from Settings, test all 4 swipe directions + pinch in/out, and expect to need at least one
+threshold-tuning pass (`SWIPE_DISTANCE_THRESHOLD`, `PINCH_CLOSED_THRESHOLD`/`PINCH_OPEN_THRESHOLD`,
+`GESTURE_COOLDOWN_MS` in `HandGestureService.kt`) against real hand-motion behavior, since none of
+those values have been calibrated against anything but reasoning about plausible ranges yet.
+
+**Explicitly scoped out during this same conversation, not forgotten**: browsing the world's
+exposed/misconfigured CCTV cameras via Insecam/Shodan/Censys/ZoomEye/FOFA/BinaryEdge/Netlas/
+GreyNoise - declined as a feature (accessing other people's private, unsecured-by-accident camera
+feeds without their consent, not a scoped authorized-security context). Two legitimate
+alternatives were agreed instead and are backlog, not built yet: (1) a self-audit tool using
+those same OSINT engines' APIs to check the *user's own* exposure, and (2) a public-webcam viewer
+using directories the owners actually published for public viewing (EarthCam, Windy.com's webcam
+API, official tourism/traffic cams) - see not_started.md.
+
 ## Real notification actions + media transport controls (2026-08-14)
 User: the last deferred item from the router/recents/notifications ask - real interactive
 notification controls (a call's "End call") and real media controls (seeking to a duration,

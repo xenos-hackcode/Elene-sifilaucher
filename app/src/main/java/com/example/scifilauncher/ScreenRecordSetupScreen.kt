@@ -51,7 +51,6 @@ fun ScreenRecordSetupScreen(
                     .fillMaxSize()
                     .systemBarsPadding()
                     .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-                    .verticalScroll(rememberScrollState())
             ) {
                 Text(
                     text = "< DASH",
@@ -60,6 +59,7 @@ fun ScreenRecordSetupScreen(
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(bottom = 16.dp).clickable { onBack() }
                 )
+                Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 Text(
                     text = "SCREEN RECORD SETUP",
                     color = if (isDark) Color.White else Color.Black,
@@ -126,6 +126,7 @@ fun ScreenRecordSetupScreen(
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
+                }
                 }
             }
         }

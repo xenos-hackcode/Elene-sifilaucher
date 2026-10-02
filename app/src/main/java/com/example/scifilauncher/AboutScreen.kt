@@ -36,26 +36,14 @@ fun AboutScreen(
     val context = LocalContext.current
     val baseFontSize = fontSize.sp
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        PanelBackdrop(isDark = isDark)
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            Text(
-                text = "< DASH",
-                color = themeColor,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .padding(bottom = 16.dp)
-                    .clickable { onBack() }
-            )
-
+    TerminalScaffold(
+        themeColor = themeColor,
+        code = "ABOUT",
+        title = "About",
+        subtitle = "",
+        backLabel = "‹  DASHBOARD",
+        onBack = onBack
+    ) {
             Text(
                 text = "SciFiLauncher – Xenos",
                 color = themeColor,
@@ -150,7 +138,6 @@ fun AboutScreen(
             }
 
             Spacer(Modifier.height(24.dp))
-        }
     }
 }
 

@@ -47,7 +47,7 @@ fun ThemePanel(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp)
-                    .verticalScroll(rememberScrollState())
+                    .heightIn(max = 480.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -81,6 +81,9 @@ fun ThemePanel(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+
+                // Header above stays fixed; only the theme list + appearance options below scroll.
+                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
 
                 CedalThemes.forEachIndexed { index, t ->
                     Row(
@@ -170,6 +173,7 @@ fun ThemePanel(
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
+                }
             }
         }
     }

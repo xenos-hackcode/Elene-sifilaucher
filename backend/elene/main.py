@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 
 # ---- CONFIG ----
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # Fallback providers: if OpenAI errors (bad/revoked key, outage, rate limit, no credits), retry
 # with each of these in turn instead of just returning "I had a problem thinking just now" - found
@@ -24,7 +24,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # slot, they do different jobs. Groq and OpenRouter both expose an OpenAI-compatible REST API, so
 # they reuse the `openai` SDK pointed at a different base_url instead of a separate client library.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 ANTHROPIC_CHAT_MODEL_CHEAP = os.getenv("ANTHROPIC_CHAT_MODEL_CHEAP", "claude-haiku-4-5-20251001")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -49,6 +49,11 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_MALE1_VOICE_ID")
 GITHUB_PAT = os.getenv("GITHUB_PAT")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "xenos-hackcode/Elene-sifilaucher")
 UPDATE_REQUEST_LABEL = "approved-backend-update"
+# "Create an app" requests (2026-09-25) - a brand-new, separate standalone Android app, NOT a
+# change to this repo's own source. Deliberately a different label from UPDATE_REQUEST_LABEL
+# above, polled by a completely separate scheduled cloud routine, so a new-app request can never
+# be mistaken by the pipeline for a change to SciFiLauncher itself.
+NEW_APP_REQUEST_LABEL = "approved-new-app"
 
 # Phoenix Protocol (small version, 2026-08-07): a Cloud Storage bucket this backend already has
 # write access to, used purely as a one-way backup destination for intruder-capture photos and
@@ -72,6 +77,13 @@ async def pink() -> Dict[str, Any]:
 CONVERSATION_HISTORY: Dict[str, list] = {}
 MAX_HISTORY_TURNS = 12
 
+# New-app build status (2026-09-25) - the ONLY bridge back from the new-app cloud routine to the
+# phone, same in-memory/non-durable tradeoff as CONVERSATION_HISTORY above (fine for a personal
+# project, not a guarantee). Keyed by proposal_id (string). The routine POSTs here once it knows
+# whether a build succeeded or failed; the phone polls the matching GET to learn when its queued
+# app is actually ready to install (or failed), since the phone has no GitHub access of its own.
+NEW_APP_BUILD_RESULTS: Dict[str, Dict[str, Any]] = {}
+
 # ---- MODELS ----
 
 class EleneRequest(BaseModel):
@@ -84,6 +96,10 @@ class EleneReply(BaseModel):
     reply: Optional[str]   # user-visible text
     command: Optional[str] = None       # first command, kept for older clients
     commands: List[str] = []            # full ordered list - multi-step requests need this
+    emotion: Optional[str] = None       # "smile" | "frown" | "curious" | "neutral" - see Xenos's
+                                         # own face-expression section in the system prompt below.
+                                         # Only meaningful to XenosActivity's skeleton visual;
+                                         # harmless to ignore elsewhere.
 
 class AlertEmailRequest(BaseModel):
     to: List[str]
@@ -106,6 +122,18 @@ class SubmitUpdateRequest(BaseModel):
     title: str
     description: str
     category: str
+
+class SubmitNewAppRequest(BaseModel):
+    proposal_id: int
+    title: str
+    description: str
+
+class ReportNewAppBuildResult(BaseModel):
+    proposal_id: int
+    status: str                        # "ready" or "failed"
+    download_url: Optional[str] = None # signed GCS URL, only set when status == "ready"
+    app_name: Optional[str] = None
+    message: Optional[str] = None      # human-readable detail, e.g. a failure reason
 
 class EvacuationPhoto(BaseModel):
     id: int
@@ -140,6 +168,8 @@ def _strip_json_fence(raw: str) -> str:
 
 
 def _openai_compatible_call(oai_client: OpenAI, model: str, system_prompt: str, messages: List[Dict[str, Any]], max_tokens: int, json_mode: bool) -> str:
+    if oai_client is None:
+        raise RuntimeError("OpenAI provider is not configured")
     kwargs: Dict[str, Any] = dict(model=model, messages=[{"role": "system", "content": system_prompt}] + messages, max_tokens=max_tokens)
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -250,8 +280,21 @@ You control the launcher by returning JSON only, with this exact schema:
 {
   "mode": "chat" or "command",
   "text": "short reply to show to the user",
-  "commands": ["ordered list of command strings - empty [] for chat mode"]
+  "commands": ["ordered list of command strings - empty [] for chat mode"],
+  "emotion": "smile" | "frown" | "curious" | "neutral"
 }
+
+Your face:
+- On the Xenos screen specifically, you are shown as a real, live face - a red dot-mesh skeleton,
+  not just text. It can genuinely change expression: smile, frown, or a curious head-tilt, on top
+  of its normal neutral state.
+- Set "emotion" to whichever of those four actually fits your real reaction to what the user just
+  said - smile for something pleasing/funny/a compliment, frown for something upsetting/a
+  problem/bad news, curious for something confusing/intriguing/a question you're turning over,
+  neutral otherwise. Don't force an expression that doesn't fit just to use the field - "neutral"
+  is the right answer most of the time.
+- Always include "emotion" (default "neutral" if nothing else fits), even in "chat" mode - it
+  applies to ordinary conversation, not just commands.
 
 Voice and tone:
 - Speak like a terse hacker-AI on a radio channel: short, clipped sentences.
@@ -304,6 +347,9 @@ Rules:
   - "toggle_dark_mode"
   - "toggle_battery_saver"
   - "scroll_up" / "scroll_down" (scroll whatever screen is currently in front)
+  - "swipe_left" / "swipe_right" (a real lateral swipe on whatever screen is currently in front -
+    e.g. "swipe left", "swipe to the right". Different from scroll_up/scroll_down, which are
+    vertical - never substitute one for the other just because both are "swipe"-like.)
   - "go_back" / "go_home" / "open_recents" (system navigation). Plain "close the app" /
     "close whatsapp" / "exit this" - with no word like "force"/"kill" in it - means go_home
     (leave the app, return to the home screen), NOT force_stop_app. Those are different things
@@ -319,8 +365,23 @@ Rules:
     app: this usually needs a "click" on the message box first (if it's not already focused),
     then "type_text" with the message, then "click:Send" (or whatever the send button/icon's
     visible label is) - return all of these as separate entries in "commands", in that order.
-  - "hide_page" (the user asks to hide/cover the screen for privacy, e.g. "hide page" - this
-    is a toggle, saying it again turns it back off)
+  - "hide_page" (this is a TOGGLE - the same single command both hides AND un-hides, whichever
+    is needed. Use it whenever the user asks to hide/cover the screen for privacy ("hide page",
+    "hide the screen", "cover my screen") OR asks to bring it back/remove the cover ("unhide
+    screen", "unhide", "show my screen", "reveal the screen", "bring the screen back", "stop
+    hiding"). Always return "hide_page" for either direction - there is no separate "unhide_page"
+    or "show_page" command, and never refuse or ask which direction because the tool name only
+    says "hide".)
+  - "set_lock_wallpaper" (the user asks to set the green root/glitch "HACKER" design - the same
+    look as the hide_page privacy cover - as their lock screen wallpaper, e.g. "make that my lock
+    screen", "set the glitch design as my lock screen", "use the hacker design for my lock
+    screen". Renders one static frame of the design and sets it via WallpaperManager with
+    FLAG_LOCK only - the home screen wallpaper is untouched. Not a live/animated wallpaper.)
+  - "find_my_location" (the user is lost, disoriented, or asks to see where they currently are,
+    e.g. "where am I", "find my location", "I'm lost", "show me where I am", "help me find my
+    way". Opens a real live GPS map (not the decorative 3D globe) showing their actual current
+    position on real streets - a genuine safety tool, treat requests for it as urgent, do not ask
+    clarifying questions first.)
   - "flashlight:on" / "flashlight:off" (turn the torch on or off)
   - "bluetooth:on" (turns Bluetooth on directly via a one-tap system confirmation - use this
     whenever the user asks to turn Bluetooth ON, e.g. "put on my bluetooth", "turn on bluetooth")
@@ -544,6 +605,36 @@ is no build/deploy pipeline behind this yet):
   right now if they tell you what they want changed. Don't just state the limitation and stop -
   always mention the real capability you do have in the same breath.
 
+Creating a brand-new, separate app (not a change to this app - a whole new standalone one, e.g.
+"make me a flashlight app", "create an app that tracks my water intake"):
+- PLAN FIRST, don't queue on the first mention. The cloud pipeline that actually builds this has
+  no way to ask follow-up questions once it starts - whatever description you queue is exactly
+  what gets built, unreviewed. So when the user first raises the idea, respond with "mode": "chat"
+  and have a short back-and-forth: what should it actually do, any specific screens/buttons/
+  behavior they care about, a name for it. Don't interrogate exhaustively - a couple of clarifying
+  questions is usually enough for a small app - but don't skip straight to queuing from a one-line
+  request either.
+- Once you and the user have landed on a clear plan, SUMMARIZE it back to them in one message
+  ("So: a flashlight app with a brightness slider and a strobe toggle, called Torch. Want me to
+  queue that?") and only set "commands" to
+  ["propose_new_app:<the full agreed description, detailed enough that someone building it from
+  scratch has everything they need>"] once they explicitly confirm that summary (a clear "yes",
+  "go ahead", "build it", etc - not just continuing to chat about it). This queues a proposal
+  requiring fingerprint approval, same as propose_update, but goes through a completely separate
+  pipeline (never touches this app's own code).
+- If the user's very first ask is already fully specific and detailed (leaves nothing meaningful
+  to clarify), it's fine to summarize-and-confirm in the same turn rather than manufacturing an
+  unnecessary question - the goal is a clear, confirmed plan before queuing, not friction for its
+  own sake.
+- Once approved, it still takes real time to actually build (a cloud pipeline generates and
+  compiles a real Android project) - don't imply it happens instantly. Say it'll show up in
+  Security > My Apps as ready to install once the build finishes, which can take a while (real
+  code generation + a real compile, not seconds).
+- If the user asks you to change or add a feature to a SPECIFIC app already on their phone (not
+  this launcher), that's not something you can do - you have no access to other apps' source.
+  Only "make me a new app that does X" (a new app you build for them) or changes to THIS app
+  (propose_update above) are real capabilities.
+
 Helping when something in the app seems broken (real, tested behavior - not guesses):
 - Notification action buttons (e.g. a call's real "End call"/"Answer", an email's
   "Reply"/"Archive") and the "Now Playing" media card (real seek bar, play/pause, skip, loop,
@@ -651,13 +742,17 @@ Always return valid JSON. Do not add explanations outside JSON.
         commands = [c for c in raw_commands if isinstance(c, str) and c.strip()]
         command = commands[0] if commands else None
 
+        emotion = data.get("emotion")
+        if emotion not in ("smile", "frown", "curious", "neutral"):
+            emotion = "neutral"
+
         # Remember this exchange (using the user's original words, not the internal-context
         # wrapped version, so future turns don't accumulate stale battery/screen snapshots).
         history.append({"role": "user", "content": user_msg})
         history.append({"role": "assistant", "content": raw})
         del history[: max(0, len(history) - MAX_HISTORY_TURNS * 2)]
 
-        return EleneReply(intent=mode, reply=text, command=command, commands=commands)
+        return EleneReply(intent=mode, reply=text, command=command, commands=commands, emotion=emotion)
 
     except Exception as e:
         print("Error parsing model reply:", e)
@@ -694,10 +789,11 @@ async def submit_update_request(body: SubmitUpdateRequest) -> Dict[str, Any]:
     phone-side fingerprint gate already did. Creates a real GitHub issue, labeled
     UPDATE_REQUEST_LABEL, that a scheduled cloud agent polls for - this is the only bridge
     available, since the phone has no GitHub/GCP access and the cloud agent has no phone access.
-    A backend-only scope by design: the cloud agent can build+self-test+deploy a Cloud Run
-    change autonomously, but has no way to get a change onto the physical device, so this is
-    intentionally not used for app-side (APK) proposals yet - see planner/not_started.md for the
-    real reasoning (that's the separately-deferred remote-auto-update decision, not this one)."""
+    Scoped to changes within THIS repo (backend/elene/ and app/ Kotlin source) - the routine
+    implements and locally verifies app-side changes too, but has no way to install a build onto
+    the physical device itself, so an app-side change still needs a real session with device
+    access (this one) to actually build/install/confirm it works. See planner/not_started.md for
+    submit_new_app_request below, the separate pipeline for brand-new standalone apps."""
     if not GITHUB_PAT:
         return {"ok": False, "error": "GITHUB_PAT is not configured on this backend yet."}
 
@@ -733,6 +829,81 @@ async def submit_update_request(body: SubmitUpdateRequest) -> Dict[str, Any]:
     except Exception as e:
         print("Error creating GitHub issue for update request:", e)
         return {"ok": False, "error": str(e)}
+
+
+@app.post("/elene/submit_new_app_request")
+async def submit_new_app_request(body: SubmitNewAppRequest) -> Dict[str, Any]:
+    """Called only after a real fingerprint approval on-device, same gate as
+    submit_update_request above - this endpoint doesn't re-verify anything itself. Creates a
+    GitHub issue labeled NEW_APP_REQUEST_LABEL, polled by a SEPARATE scheduled cloud routine from
+    the self-update one - deliberately isolated so a request for a brand-new standalone app can
+    never touch this repo's own SciFiLauncher source. That routine builds a standalone Android
+    project and attaches the finished APK as a GitHub release asset; the phone's Updates screen
+    surfaces it once ready and the user installs it through the normal Android install prompt
+    (their own explicit choice - not a silent Device Owner install)."""
+    if not GITHUB_PAT:
+        return {"ok": False, "error": "GITHUB_PAT is not configured on this backend yet."}
+
+    issue_body = (
+        f"**Proposal ID:** {body.proposal_id}\n\n"
+        f"{body.description}\n\n"
+        f"---\n"
+        f"Approved via fingerprint on-device (UpdateProposalLog id {body.proposal_id}) - this "
+        f"issue was created automatically, not raised manually. Scope: this is a request for a "
+        f"brand-new, SEPARATE, standalone Android app - do NOT modify anything under backend/ or "
+        f"app/ in this repo for this issue. Build the new app in its own new top-level folder, "
+        f"produce a real signed APK, and attach it as a GitHub release asset, then comment on "
+        f"this issue with the release URL and close it."
+    )
+    try:
+        response = requests.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+            headers={
+                "Authorization": f"Bearer {GITHUB_PAT}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={
+                "title": f"[New app request] {body.title}",
+                "body": issue_body,
+                "labels": [NEW_APP_REQUEST_LABEL],
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        issue_url = response.json().get("html_url")
+        return {"ok": True, "issue_url": issue_url}
+    except Exception as e:
+        print("Error creating GitHub issue for new-app request:", e)
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/elene/report_new_app_build_result")
+async def report_new_app_build_result(body: ReportNewAppBuildResult) -> Dict[str, Any]:
+    """Called by the SEPARATE new-app-request cloud routine (not the phone, not the self-update
+    pipeline) once it has a real terminal Cloud Build result for a proposal - this is the only way
+    the phone learns a build finished, since it has no GitHub access of its own to check issue
+    comments directly. No auth on this endpoint (matches this backend's existing security model -
+    see other /elene/ endpoints); worst case a bogus call here just shows a wrong status on the
+    phone's My Apps screen, it can't install anything by itself."""
+    NEW_APP_BUILD_RESULTS[str(body.proposal_id)] = {
+        "status": body.status,
+        "download_url": body.download_url,
+        "app_name": body.app_name,
+        "message": body.message,
+        "reported_at": int(time.time()),
+    }
+    return {"ok": True}
+
+
+@app.get("/elene/new_app_status/{proposal_id}")
+async def new_app_status(proposal_id: str) -> Dict[str, Any]:
+    """Phone polls this (Security > My Apps) for each NEW_APP proposal it's tracking. Returns
+    "pending" until the routine above reports a real terminal result - there is no separate
+    "building" signal, since the routine only calls report_new_app_build_result once, at the end."""
+    result = NEW_APP_BUILD_RESULTS.get(proposal_id)
+    if result is None:
+        return {"status": "pending"}
+    return result
 
 
 @app.post("/elene/evacuate_backup")
@@ -872,6 +1043,33 @@ class LaptopSession:
 
 LAPTOP_SESSIONS: Dict[str, LaptopSession] = {}
 
+# Bound idle pairing entries and reject role replacement. Pairing tokens remain secrets;
+# these limits do not replace authentication or deployment-level rate limits.
+MAX_RELAY_SESSIONS = 256
+
+
+async def _claim_relay(websocket, token, sessions, factory, role, peer_role):
+    if not 12 <= len(token) <= 128:
+        await websocket.close(code=4001)
+        return None
+    if token not in sessions and len(sessions) >= MAX_RELAY_SESSIONS:
+        await websocket.close(code=4013)
+        return None
+    session = sessions.setdefault(token, factory())
+    if getattr(session, role) is not None:
+        await websocket.close(code=4009)
+        return None
+    # No await between checking and reserving the role (one asyncio event loop).
+    setattr(session, role, websocket)
+    try:
+        await websocket.accept()
+    except BaseException:
+        setattr(session, role, None)
+        if getattr(session, peer_role) is None:
+            sessions.pop(token, None)
+        raise
+    return session
+
 
 def _laptop_session(token: str) -> LaptopSession:
     return LAPTOP_SESSIONS.setdefault(token, LaptopSession())
@@ -914,43 +1112,41 @@ async def _relay_loop(websocket: WebSocket, session: LaptopSession, is_agent: bo
 
 @app.websocket("/laptop/ws/agent/{token}")
 async def laptop_agent_ws(websocket: WebSocket, token: str) -> None:
-    if len(token) < 12:
-        await websocket.close(code=4001)
+    session = await _claim_relay(websocket, token, LAPTOP_SESSIONS, LaptopSession, "agent", "phone")
+    if session is None:
         return
-    await websocket.accept()
-    session = _laptop_session(token)
-    session.agent = websocket
-    await _safe_send_text(session.phone, json.dumps({"type": "agent_connected"}))
-    await _safe_send_text(
-        websocket,
-        json.dumps({"type": "phone_connected" if session.phone else "phone_offline"}),
-    )
     try:
+        await _safe_send_text(session.phone, json.dumps({"type": "agent_connected"}))
+        await _safe_send_text(
+            websocket,
+            json.dumps({"type": "phone_connected" if session.phone else "phone_offline"}),
+        )
         await _relay_loop(websocket, session, is_agent=True)
     finally:
         if session.agent is websocket:
             session.agent = None
+        if session.agent is None and session.phone is None:
+            LAPTOP_SESSIONS.pop(token, None)
         await _safe_send_text(session.phone, json.dumps({"type": "agent_disconnected"}))
 
 
 @app.websocket("/laptop/ws/phone/{token}")
 async def laptop_phone_ws(websocket: WebSocket, token: str) -> None:
-    if len(token) < 12:
-        await websocket.close(code=4001)
+    session = await _claim_relay(websocket, token, LAPTOP_SESSIONS, LaptopSession, "phone", "agent")
+    if session is None:
         return
-    await websocket.accept()
-    session = _laptop_session(token)
-    session.phone = websocket
-    await _safe_send_text(
-        websocket,
-        json.dumps({"type": "agent_connected" if session.agent else "agent_offline"}),
-    )
-    await _safe_send_text(session.agent, json.dumps({"type": "phone_connected"}))
     try:
+        await _safe_send_text(
+            websocket,
+            json.dumps({"type": "agent_connected" if session.agent else "agent_offline"}),
+        )
+        await _safe_send_text(session.agent, json.dumps({"type": "phone_connected"}))
         await _relay_loop(websocket, session, is_agent=False)
     finally:
         if session.phone is websocket:
             session.phone = None
+        if session.agent is None and session.phone is None:
+            LAPTOP_SESSIONS.pop(token, None)
         await _safe_send_text(session.agent, json.dumps({"type": "phone_disconnected"}))
 
 
@@ -992,43 +1188,41 @@ async def _phone_relay_loop(websocket: WebSocket, session: PhoneSession, is_agen
 
 @app.websocket("/phone/ws/agent/{token}")
 async def phone_agent_ws(websocket: WebSocket, token: str) -> None:
-    if len(token) < 12:
-        await websocket.close(code=4001)
+    session = await _claim_relay(websocket, token, PHONE_SESSIONS, PhoneSession, "agent", "controller")
+    if session is None:
         return
-    await websocket.accept()
-    session = _phone_session(token)
-    session.agent = websocket
-    await _safe_send_text(session.controller, json.dumps({"type": "agent_connected"}))
-    await _safe_send_text(
-        websocket,
-        json.dumps({"type": "controller_connected" if session.controller else "controller_offline"}),
-    )
     try:
+        await _safe_send_text(session.controller, json.dumps({"type": "agent_connected"}))
+        await _safe_send_text(
+            websocket,
+            json.dumps({"type": "controller_connected" if session.controller else "controller_offline"}),
+        )
         await _phone_relay_loop(websocket, session, is_agent=True)
     finally:
         if session.agent is websocket:
             session.agent = None
+        if session.agent is None and session.controller is None:
+            PHONE_SESSIONS.pop(token, None)
         await _safe_send_text(session.controller, json.dumps({"type": "agent_disconnected"}))
 
 
 @app.websocket("/phone/ws/controller/{token}")
 async def phone_controller_ws(websocket: WebSocket, token: str) -> None:
-    if len(token) < 12:
-        await websocket.close(code=4001)
+    session = await _claim_relay(websocket, token, PHONE_SESSIONS, PhoneSession, "controller", "agent")
+    if session is None:
         return
-    await websocket.accept()
-    session = _phone_session(token)
-    session.controller = websocket
-    await _safe_send_text(
-        websocket,
-        json.dumps({"type": "agent_connected" if session.agent else "agent_offline"}),
-    )
-    await _safe_send_text(session.agent, json.dumps({"type": "controller_connected"}))
     try:
+        await _safe_send_text(
+            websocket,
+            json.dumps({"type": "agent_connected" if session.agent else "agent_offline"}),
+        )
+        await _safe_send_text(session.agent, json.dumps({"type": "controller_connected"}))
         await _phone_relay_loop(websocket, session, is_agent=False)
     finally:
         if session.controller is websocket:
             session.controller = None
+        if session.agent is None and session.controller is None:
+            PHONE_SESSIONS.pop(token, None)
         await _safe_send_text(session.agent, json.dumps({"type": "controller_disconnected"}))
 
 

@@ -54,6 +54,52 @@ In the app: **Settings → Elene Backend → Backend URL**, paste your deployed 
 Save. This is a runtime setting, no rebuild needed. Until it's set, the row shows "Not set -
 Elene won't respond" and voice/chat requests just won't do anything - that's expected, not a bug.
 
+## Safety tools and app starter
+
+Open **Security → Safety & creation** for the new tools:
+
+The new screens use the selected launcher accent, dark terminal cards, readable status
+text, and larger controls. Shared panels also have a subtle static grid background.
+
+- **Safety check-in & device defense**: arm a local reminder for 1–1440 minutes,
+  cancel/check in, open the dialer or location map, and review Android security/VPN settings.
+  Notifications and exact-alarm access must be enabled before arming. A missed check-in
+  posts a notification on this phone only; it does not detect danger or contact anyone.
+  Rebooting clears the timer, and force-stop, permission changes, notification settings,
+  Do Not Disturb, or a powered-off phone can prevent an alert. Re-arm after restarting.
+- **Create an offline app**: export an editable checklist or notes web app as a single HTML
+  file using Android's file picker. Open it in a browser. Data is stored in that browser
+  where supported; clearing browser storage loses it. These are templates, not AI-generated
+  Android APKs. Exported code is never executed inside the launcher.
+
+The local Wi-Fi count now uses the actual private IPv4 subnet (/24–/30), excludes this device
+and network/broadcast addresses, and limits discovery to 16 concurrent probes. Use discovery
+only on networks you own or have permission to assess. Nonresponding or isolated devices
+will not be counted, and unsupported networks return unavailable.
+
+Backend relay hardening rejects duplicate role connections, bounds token length and active
+session allocation, and removes disconnected sessions. Pairing tokens remain bearer secrets;
+this does not authenticate the separate HTTP endpoints. Those endpoints currently lack
+application-level authentication, including email, paid AI, backup, and update-request routes.
+Keep deployments behind an authenticated access layer or private network until compatible
+client/server authentication is implemented. No attack or retaliation automation is added.
+
+Backend regression checks (install `backend/elene/requirements.txt` first):
+
+```sh
+python -m unittest discover -s backend/elene -p test_regressions.py -v
+```
+
+Android checks and debug package:
+
+```sh
+./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+
+On-device verification is still required for reminder delivery with the screen locked,
+permission changes, cancellation/re-arming, and reboot behavior. Check the new screens
+with your preferred theme and font size, then export and open both app templates.
+
 ## License
 
 Apache 2.0 - see [LICENSE](LICENSE).

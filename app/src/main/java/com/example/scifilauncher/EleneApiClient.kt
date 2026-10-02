@@ -10,11 +10,22 @@ import okhttp3.RequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
+/** "pending" (still queued or building), "ready" (downloadUrl set), or "failed". */
+data class NewAppStatus(
+    val status: String,
+    val downloadUrl: String?,
+    val appName: String?,
+    val message: String?
+)
+
 data class EleneResponse(
     val intent: String,
     val reply: String?,
     val command: String?,
-    val commands: List<String> = command?.let { listOf(it) } ?: emptyList()
+    val commands: List<String> = command?.let { listOf(it) } ?: emptyList(),
+    // "smile" | "frown" | "curious" | "neutral" - only meaningful to XenosActivity's skeleton
+    // visual, see backend's system prompt "Your face" section. Null/unrecognized == neutral.
+    val emotion: String? = null
 )
 
 /** [x]/[y] are a single tap target, [x2]/[y2] a swipe's end point (both null for a plain tap).
@@ -141,7 +152,8 @@ object EleneApiClient {
                 } else {
                     command?.let { listOf(it) } ?: emptyList()
                 }
-                EleneResponse(intent = intent, reply = reply, command = command, commands = commands)
+                val emotion = json.optString("emotion", null)?.ifBlank { null }
+                EleneResponse(intent = intent, reply = reply, command = command, commands = commands, emotion = emotion)
             }
         } catch (e: Exception) {
             Log.e("EleneApiClient", "API call failed", e)
@@ -196,6 +208,57 @@ object EleneApiClient {
                 false
             }
         }
+
+    /** "Create an app" proposals - deliberately a separate endpoint/label from
+     * submit_update_request above, so a request for a brand-new standalone app can never be
+     * mistaken by the cloud pipeline for a change to this app's own source. See
+     * planner/not_started.md for why these are kept on two different scheduled routines. */
+    suspend fun submitNewAppRequest(proposalId: Long, title: String, description: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val root = JSONObject().apply {
+                    put("proposal_id", proposalId)
+                    put("title", title)
+                    put("description", description)
+                }
+                val body = RequestBody.create(jsonMediaType, root.toString())
+                val request = Request.Builder()
+                    .url("$ELENE_BASE_URL/elene/submit_new_app_request")
+                    .post(body)
+                    .build()
+
+                client.newCall(request).execute().use { response -> response.isSuccessful }
+            } catch (e: Exception) {
+                Log.e("EleneApiClient", "submit_new_app_request call failed", e)
+                false
+            }
+        }
+
+    /** Polls the new-app build status for one approved proposal - see
+     * report_new_app_build_result/new_app_status in backend/elene/main.py. Returns null on any
+     * network failure (caller should just treat that as "still pending", not an error). */
+    suspend fun fetchNewAppStatus(proposalId: Long): NewAppStatus? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$ELENE_BASE_URL/elene/new_app_status/$proposalId")
+                .get()
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                NewAppStatus(
+                    status = json.optString("status", "pending"),
+                    downloadUrl = json.optString("download_url").takeIf { it.isNotBlank() },
+                    appName = json.optString("app_name").takeIf { it.isNotBlank() },
+                    message = json.optString("message").takeIf { it.isNotBlank() }
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("EleneApiClient", "new_app_status call failed", e)
+            null
+        }
+    }
 
     /** Fetches ElevenLabs-synthesized speech audio (mp3 bytes) for [text], or null if
      * the backend isn't configured for TTS / the call fails - caller should fall back

@@ -5,6 +5,7 @@ import android.net.wifi.WifiManager
 import android.provider.Settings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.AlertDialog
@@ -16,6 +17,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +28,87 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** Dispatches a wallpaper id to its own real renderer - used both full-screen (WallpaperBackground,
+ * the actual Dashboard background) and shrunk down to a thumbnail (WallpaperScreen's picker rows),
+ * so a picker preview is always the genuine live effect, never a fake static mockup of it. Falls
+ * back to Matrix for an unrecognized/missing id rather than a blank screen. */
+@Composable
+fun WallpaperRenderer(id: String, themeColor: Color, isDark: Boolean, batteryMode: BatterySaverMode) {
+    when (id) {
+        "matrix" -> MatrixBackground(themeColor = themeColor, isDark = isDark, batteryMode = batteryMode)
+        "starfield_calm" -> StarfieldBackground(themeColor = themeColor, speed = 0.6f)
+        "starfield_fast" -> StarfieldBackground(themeColor = themeColor, speed = 1.8f)
+        "scanlines_calm" -> ScanlinesBackground(themeColor = themeColor, speed = 0.6f)
+        "scanlines_fast" -> ScanlinesBackground(themeColor = themeColor, speed = 2f)
+        "pulse_calm" -> PulseBackground(themeColor = themeColor, speed = 0.6f)
+        "pulse_fast" -> PulseBackground(themeColor = themeColor, speed = 2f)
+        "grid_calm" -> GridTunnelBackground(themeColor = themeColor, speed = 0.6f)
+        "grid_fast" -> GridTunnelBackground(themeColor = themeColor, speed = 1.8f)
+        "coderain_calm" -> CodeRainBackground(themeColor = themeColor, speed = 0.6f)
+        "coderain_fast" -> CodeRainBackground(themeColor = themeColor, speed = 2f)
+        "solid" -> SolidGlowBackground(themeColor = themeColor)
+        "vignette" -> VignetteBackground(themeColor = themeColor)
+        "noise_static" -> NoiseStaticBackground(themeColor = themeColor)
+        "horizon" -> HorizonLineBackground(themeColor = themeColor)
+        "xenos_glitch_image" -> XenosGlitchImageBackground(themeColor = themeColor)
+        "xenos_glitch_video" -> XenosGlitchVideoBackground(themeColor = themeColor)
+        "xenos_glitch_touch" -> XenosGlitchTouchBackground(themeColor = themeColor)
+        "globe_live" -> GlobePlaceholderWithAutoLaunch(GlobeWallpaperMode.LIVE)
+        "globe_video" -> GlobePlaceholderWithAutoLaunch(GlobeWallpaperMode.VIDEO)
+        "globe_image" -> GlobePlaceholderWithAutoLaunch(GlobeWallpaperMode.IMAGE)
+        "shake" -> ShakeReactiveBackground(themeColor = themeColor)
+        "tilt" -> TiltReactiveBackground(themeColor = themeColor)
+        "touch" -> HorizonTouchBackground(themeColor = themeColor)
+        "voice" -> VoiceReactiveBackground(themeColor = themeColor)
+        "welcome_eye" -> WelcomeEyeLiveWallpaper(batteryMode = batteryMode)
+        "xenos_face" -> XenosFaceLiveWallpaper(batteryMode = batteryMode)
+        else -> MatrixBackground(themeColor = themeColor, isDark = isDark, batteryMode = batteryMode)
+    }
+}
+
+/** Renders whichever wallpaper the user picked in Settings > Wallpaper, full-screen - this is
+ * the Dashboard's actual background. */
+@Composable
+fun WallpaperBackground(themeColor: Color, isDark: Boolean, batteryMode: BatterySaverMode) {
+    val context = LocalContext.current
+    val selectedId = remember { WallpaperStore.selectedId(context) }
+    WallpaperRenderer(selectedId, themeColor, isDark, batteryMode)
+}
+
+/** Safe for WallpaperScreen's picker rows, where every entry in the current category renders at
+ * once - unlike [WallpaperRenderer], camera-driven Live sources (welcome_eye, xenos_face) show
+ * their static idle state instead of actually starting the camera pipeline, since only one
+ * consumer can hold the front camera at a time and a list of them all trying to at once would
+ * fight over it. Matrix/Shake have no such conflict, so those thumbnails stay fully live. */
+@Composable
+fun WallpaperThumbnailRenderer(id: String, themeColor: Color, isDark: Boolean, batteryMode: BatterySaverMode) {
+    when (id) {
+        "welcome_eye" -> Box(Modifier.fillMaxSize().background(Color(0xFF020202))) {
+            EyeVisual(modifier = Modifier.fillMaxSize(), facePresent = false)
+        }
+        "xenos_face" -> Box(Modifier.fillMaxSize().background(Color(0xFF020202)))
+        // Not a hardware-exclusivity issue like camera, but opening a real mic stream for every
+        // thumbnail in a list is still wasteful/unnecessary - a static glow reads fine as a preview.
+        "voice" -> Box(Modifier.fillMaxSize().background(Color(0xFF020202))) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(color = themeColor.copy(alpha = 0.4f), radius = kotlin.math.min(size.width, size.height) * 0.2f)
+            }
+        }
+        // A real WebGL WebView per thumbnail row is real GPU/memory cost for something rendered
+        // at 54x96dp - a plain drawn circle+grid reads as "the globe" fine at that size.
+        "globe_live", "globe_video", "globe_image" -> Box(Modifier.fillMaxSize().background(Color(0xFF020202))) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val r = kotlin.math.min(size.width, size.height) * 0.32f
+                val c = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f)
+                drawCircle(color = Color.White.copy(alpha = 0.7f), radius = r, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f))
+                drawLine(Color.White.copy(alpha = 0.5f), androidx.compose.ui.geometry.Offset(c.x - r, c.y), androidx.compose.ui.geometry.Offset(c.x + r, c.y), 1f)
+                drawOval(color = Color.White.copy(alpha = 0.5f), topLeft = androidx.compose.ui.geometry.Offset(c.x - r * 0.4f, c.y - r), size = androidx.compose.ui.geometry.Size(r * 0.8f, r * 2f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1f))
+            }
+        }
+        else -> WallpaperRenderer(id, themeColor, isDark, batteryMode)
+    }
+}
 
 @Composable
 fun DashboardScreen(
@@ -73,9 +156,9 @@ fun DashboardScreen(
 
     // WEATHER - real data via WeatherClient (Open-Meteo, free/no key) + the phone's own
     // last-known location, same source Elene's chat context now uses. Was a dead hardcoded
-    // placeholder before ("--°C CLEAR", never actually updated) - a real, silent gap found via
+    // placeholder before ("--Â°C CLEAR", never actually updated) - a real, silent gap found via
     // the user directly pointing at it on-device, not something caught by a clean build.
-    var weatherText by remember { mutableStateOf("--°C CLEAR") }
+    var weatherText by remember { mutableStateOf("--Â°C CLEAR") }
     val lockPrefsForWeather = remember {
         context.getSharedPreferences("lock_prefs", android.content.Context.MODE_PRIVATE)
     }
@@ -115,7 +198,7 @@ fun DashboardScreen(
     Box(
         modifier = modifier.fillMaxSize()
     ) {
-        MatrixBackground(
+        WallpaperBackground(
             themeColor = themeColor,
             isDark = isDark,
             batteryMode = batteryMode
@@ -379,10 +462,17 @@ fun DashboardScreen(
             }
         }
 
-        // NOS NAV
+        // NOS NAV - navigationBarsPadding() first, THEN the 32dp visual margin on top of it.
+        // Real device log evidence: the system's bottom gesture-nav inset starts at y=2205 of a
+        // 2340px-tall screen (~48dp), but the old fixed 32dp alone left this row's touch targets
+        // sitting inside that reserved strip, so taps landed on the OS's edge-swipe handling
+        // instead of the app (confirmed via logcat: MainActivity went to "stopped" right after a
+        // tap here, with a ScifiAccessibilityService bubble overlay taking over - not our N/O/S
+        // click at all). User reported "N" repeatedly doing nothing.
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
                 .padding(bottom = 32.dp)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,

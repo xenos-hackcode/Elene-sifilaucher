@@ -36,6 +36,7 @@ fun SecurityScreen(
     onOpenFileManager: () -> Unit,
     onOpenRequests: () -> Unit,
     onOpenUpdates: () -> Unit,
+    onOpenMyApps: () -> Unit,
     onOpenAppLog: () -> Unit,
     onOpenCommands: () -> Unit,
     onRequestBiometricForVoiceId: (onSuccess: () -> Unit) -> Unit,
@@ -63,6 +64,13 @@ fun SecurityScreen(
     onToggleCedalSharedSystem: (Boolean) -> Unit,
     kioskModeEnabled: Boolean,
     onToggleKioskMode: (Boolean) -> Unit,
+    gestureControlEnabled: Boolean,
+    onToggleGestureControl: (Boolean) -> Unit,
+    onOpenGestureSettings: () -> Unit,
+    pinchGestureEnabled: Boolean,
+    onTogglePinchGesture: (Boolean) -> Unit,
+    faceGesturesEnabled: Boolean,
+    onToggleFaceGestures: (Boolean) -> Unit,
     onOpenLockScreenSettings: () -> Unit,
     onArmSequenceMode: () -> Unit,
     onExitSequenceMode: () -> Unit,
@@ -70,6 +78,7 @@ fun SecurityScreen(
     onToggleAntiTheftMode: (Boolean) -> Unit,
     onRequestCallScreeningRole: () -> Unit
 ) {
+    val toolsContext = LocalContext.current
     var showListeningInfoDialog by remember { mutableStateOf(showListeningInfo) }
 
     var showManualArmInfo by remember { mutableStateOf(false) }
@@ -80,6 +89,8 @@ fun SecurityScreen(
     var showLocationHistoryInfo by remember { mutableStateOf(false) }
     var showFullWipeInfo by remember { mutableStateOf(false) }
     var showKioskInfo by remember { mutableStateOf(false) }
+    var showGestureControlInfo by remember { mutableStateOf(false) }
+    var showFaceGesturesInfo by remember { mutableStateOf(false) }
     var showLockScreenInfo by remember { mutableStateOf(false) }
 
     Box(
@@ -132,6 +143,26 @@ fun SecurityScreen(
                 horizontalAlignment = Alignment.Start
             ) {
 
+            val statusContext = LocalContext.current
+            val vpnConnected = remember { WireGuardVpnManager.currentState(statusContext) == com.wireguard.android.backend.Tunnel.State.UP }
+            val shizukuOk = remember { ShizukuManager.hasPermission() }
+            PanelSection(title = "PROTECTION STATUS", themeColor = themeColor) {
+                ProtectionStatusRow("Tracker & ad blocking", trackerBlockingActive, themeColor)
+                ProtectionStatusRow("VPN client", vpnConnected, themeColor)
+                ProtectionStatusRow("Shizuku access", shizukuOk, themeColor)
+                ProtectionStatusRow("Kiosk mode", kioskModeEnabled, themeColor)
+                ProtectionStatusRow("Gesture control", gestureControlEnabled, themeColor, showDivider = false)
+            }
+
+            PanelSection(title = "Safety & creation", themeColor = themeColor) {
+                PanelRow(label = "Safety check-in & device defense", themeColor = themeColor, onClick = {
+                    toolsContext.startActivity(android.content.Intent(toolsContext, SafetyToolsActivity::class.java))
+                })
+                PanelRow(label = "Create an offline app", themeColor = themeColor, showDivider = false, onClick = {
+                    toolsContext.startActivity(android.content.Intent(toolsContext, AppStarterActivity::class.java))
+                })
+            }
+
             PanelSection(title = tr("section_data_media"), themeColor = themeColor) {
                 PanelRow(label = tr("row_freezer"), themeColor = themeColor, onClick = onOpenFreezer)
                 PanelRow(label = tr("row_hidden_apps"), themeColor = themeColor, onClick = onOpenHiddenApps)
@@ -143,6 +174,7 @@ fun SecurityScreen(
             PanelSection(title = tr("section_activity"), themeColor = themeColor) {
                 PanelRow(label = tr("row_requests"), themeColor = themeColor, onClick = onOpenRequests)
                 PanelRow(label = tr("row_updates"), themeColor = themeColor, onClick = onOpenUpdates)
+                PanelRow(label = tr("row_my_apps"), themeColor = themeColor, onClick = onOpenMyApps)
                 PanelRow(label = tr("row_log"), themeColor = themeColor, onClick = onOpenAppLog)
                 PanelRow(label = tr("row_new_app_installs"), themeColor = themeColor, onClick = onOpenInstallFlags)
                 PanelToggleRow(
@@ -266,6 +298,9 @@ fun SecurityScreen(
             }
 
             PanelSection(title = tr("section_network_protection"), themeColor = themeColor) {
+                PanelRow(label = "VPN countries & disconnect", themeColor = themeColor, onClick = {
+                    toolsContext.startActivity(android.content.Intent(toolsContext, NetworkProtectionActivity::class.java))
+                })
                 PanelToggleRow(
                     label = tr("row_tracker_ad_blocking"),
                     themeColor = themeColor,
@@ -279,6 +314,49 @@ fun SecurityScreen(
                     themeColor = themeColor,
                     value = gatewayIp ?: tr("value_unavailable"),
                     onClick = onOpenRouterSettings
+                )
+                PanelRow(
+                    label = tr("row_vpn_client"),
+                    themeColor = themeColor,
+                    value = tr("value_manage"),
+                    onClick = {
+                        routerContext.startActivity(android.content.Intent(routerContext, VpnClientActivity::class.java))
+                    }
+                )
+                val blockedTodayCount = remember { TrackerBlockStats.todayCount(routerContext) }
+                PanelStaticInfoRow(
+                    label = tr("row_blocked_today"),
+                    value = blockedTodayCount.toString(),
+                    valueColor = themeColor,
+                    themeColor = themeColor
+                )
+                val blocklistScope = rememberCoroutineScope()
+                var blocklistStatus by remember { mutableStateOf<String?>(null) }
+                val updateNowLabel = tr("value_update_now")
+                val updatingLabel = tr("value_updating")
+                val updateFailedLabel = tr("value_update_failed")
+                PanelRow(
+                    label = tr("row_update_blocklist"),
+                    themeColor = themeColor,
+                    value = blocklistStatus ?: updateNowLabel,
+                    onClick = {
+                        blocklistStatus = updatingLabel
+                        blocklistScope.launch {
+                            val result = TrackerBlocklistUpdater.update(routerContext)
+                            blocklistStatus = result.fold(
+                                onSuccess = { count: Int -> "$count entries" },
+                                onFailure = { _: Throwable -> updateFailedLabel }
+                            )
+                        }
+                    }
+                )
+                PanelRow(
+                    label = tr("row_app_exceptions"),
+                    themeColor = themeColor,
+                    value = tr("value_manage"),
+                    onClick = {
+                        routerContext.startActivity(android.content.Intent(routerContext, TrackerExceptionsActivity::class.java))
+                    }
                 )
                 var showProxyDialog by remember { mutableStateOf(false) }
                 var proxyInput by remember(proxyAddress) { mutableStateOf(proxyAddress) }
@@ -571,6 +649,31 @@ fun SecurityScreen(
                     onToggle = { onToggleKioskMode(it) },
                     onInfoClick = { showKioskInfo = true }
                 )
+                PanelToggleRow(
+                    label = tr("row_gesture_control"),
+                    themeColor = themeColor,
+                    checked = gestureControlEnabled,
+                    onToggle = { onToggleGestureControl(it) },
+                    onInfoClick = { showGestureControlInfo = true }
+                )
+                PanelRow(
+                    label = tr("row_configure_gestures"),
+                    themeColor = themeColor,
+                    onClick = onOpenGestureSettings
+                )
+                PanelToggleRow(
+                    label = tr("row_pinch_gesture"),
+                    themeColor = themeColor,
+                    checked = pinchGestureEnabled,
+                    onToggle = { onTogglePinchGesture(it) }
+                )
+                PanelToggleRow(
+                    label = tr("row_face_gestures"),
+                    themeColor = themeColor,
+                    checked = faceGesturesEnabled,
+                    onToggle = { onToggleFaceGestures(it) },
+                    onInfoClick = { showFaceGesturesInfo = true }
+                )
                 PanelRow(
                     label = tr("row_change_lock_screen"),
                     themeColor = themeColor,
@@ -580,83 +683,7 @@ fun SecurityScreen(
                 )
             }
 
-            PanelSection(title = tr("section_integrity_tamper"), themeColor = themeColor) {
-                var showIntegrityInfo by remember { mutableStateOf(false) }
-                val context = LocalContext.current
-                val isGenuine = remember { AppIntegrityCheck.isGenuine(context) }
-                val rootStatus = remember { RootDetection.check(context) }
-                val fridaResult = remember { runCatching { FridaDetector.scan() }.getOrNull() }
-
-                PanelStaticInfoRow(
-                    label = tr("row_app_integrity"),
-                    value = if (isGenuine) tr("value_verified") else tr("value_modified"),
-                    valueColor = if (isGenuine) themeColor else Color.Red,
-                    themeColor = themeColor
-                )
-                PanelStaticInfoRow(
-                    label = tr("row_root_magisk"),
-                    value = if (rootStatus.looksRooted) tr("value_detected") else tr("value_not_detected"),
-                    valueColor = if (rootStatus.looksRooted) Color.Red else themeColor,
-                    themeColor = themeColor
-                )
-                PanelStaticInfoRow(
-                    label = tr("row_selinux"),
-                    value = when (rootStatus.selinuxEnforcing) {
-                        true -> tr("value_enforcing")
-                        false -> tr("value_permissive")
-                        null -> tr("value_unknown")
-                    },
-                    valueColor = when (rootStatus.selinuxEnforcing) {
-                        true -> themeColor
-                        false -> Color.Red
-                        null -> Color.Gray
-                    },
-                    themeColor = themeColor
-                )
-                PanelStaticInfoRow(
-                    label = tr("row_instrumentation_frida"),
-                    value = when {
-                        fridaResult == null -> tr("value_frida_unavailable")
-                        fridaResult.signalCount == 0 -> tr("value_not_detected")
-                        fridaResult.signalCount == 1 -> tr("value_frida_possible")
-                        else -> tr("value_frida_detected", fridaResult.signalCount.toString())
-                    },
-                    valueColor = when {
-                        fridaResult == null -> Color.Gray
-                        fridaResult.signalCount == 0 -> themeColor
-                        fridaResult.signalCount == 1 -> Color(0xFFFFA500)
-                        else -> Color.Red
-                    },
-                    themeColor = themeColor
-                )
-                PanelRow(
-                    label = tr("row_about_these_checks"),
-                    themeColor = themeColor,
-                    showDivider = false,
-                    onClick = { showIntegrityInfo = true }
-                )
-                if (showIntegrityInfo) {
-                    AlertDialog(
-                        onDismissRequest = { showIntegrityInfo = false },
-                        confirmButton = {
-                            TextButton(onClick = { showIntegrityInfo = false }) {
-                                Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
-                            }
-                        },
-                        title = { Text(tr("section_integrity_tamper"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
-                        text = {
-                            Text(
-                                modifier = Modifier
-                                    .heightIn(max = 400.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                text = tr("dialog_integrity_body"),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
-                            )
-                        }
-                    )
-                }
-            }
+            IntegrityTamperSection(themeColor = themeColor)
 
             Spacer(modifier = Modifier.height(24.dp))
             }
@@ -929,6 +956,62 @@ fun SecurityScreen(
             )
         }
 
+        // GESTURE CONTROL disclosure
+        if (showGestureControlInfo) {
+            AlertDialog(
+                onDismissRequest = { showGestureControlInfo = false },
+                title = {
+                    Text(
+                        text = tr("row_gesture_control"),
+                        color = themeColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = tr("dialog_gesture_control_body"),
+                        color = if (isDark) Color.White else Color.Black,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showGestureControlInfo = false }) {
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+        }
+
+        // FACE GESTURES disclosure
+        if (showFaceGesturesInfo) {
+            AlertDialog(
+                onDismissRequest = { showFaceGesturesInfo = false },
+                title = {
+                    Text(
+                        text = tr("row_face_gestures"),
+                        color = themeColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 16.sp
+                    )
+                },
+                text = {
+                    Text(
+                        text = tr("dialog_face_gestures_body"),
+                        color = if (isDark) Color.White else Color.Black,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showFaceGesturesInfo = false }) {
+                        Text(tr("action_ok"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            )
+        }
+
         // CHANGE ANDROID LOCK SCREEN disclosure
         if (showLockScreenInfo) {
             AlertDialog(
@@ -957,6 +1040,93 @@ fun SecurityScreen(
             )
         }
 
+        }
+    }
+}
+
+/** Extracted out of SecurityScreen's own body - that composable had grown large enough that this
+ * self-contained block (unchanged from the original anti-tampering/RASP hardening commit) started
+ * failing to compile in place with a confusing, tightly-scoped "not a composable context" cascade
+ * once more sections were added around it, despite its own content being correct. Splitting it
+ * into its own named composable resolved it - smaller composable functions are also just better
+ * practice than one 900+ line function regardless. */
+@Composable
+private fun IntegrityTamperSection(themeColor: Color) {
+    PanelSection(title = tr("section_integrity_tamper"), themeColor = themeColor) {
+        var showIntegrityInfo by remember { mutableStateOf(false) }
+        val context = LocalContext.current
+        val isGenuine = remember { AppIntegrityCheck.isGenuine(context) }
+        val rootStatus = remember { RootDetection.check(context) }
+        val fridaResult = remember { runCatching { FridaDetector.scan() }.getOrNull() }
+
+        PanelStaticInfoRow(
+            label = tr("row_app_integrity"),
+            value = if (isGenuine) tr("value_verified") else tr("value_modified"),
+            valueColor = if (isGenuine) themeColor else Color.Red,
+            themeColor = themeColor
+        )
+        PanelStaticInfoRow(
+            label = tr("row_root_magisk"),
+            value = if (rootStatus.looksRooted) tr("value_detected") else tr("value_not_detected"),
+            valueColor = if (rootStatus.looksRooted) Color.Red else themeColor,
+            themeColor = themeColor
+        )
+        PanelStaticInfoRow(
+            label = tr("row_selinux"),
+            value = when (rootStatus.selinuxEnforcing) {
+                true -> tr("value_enforcing")
+                false -> tr("value_permissive")
+                null -> tr("value_unknown")
+            },
+            valueColor = when (rootStatus.selinuxEnforcing) {
+                true -> themeColor
+                false -> Color.Red
+                null -> Color.Gray
+            },
+            themeColor = themeColor
+        )
+        PanelStaticInfoRow(
+            label = tr("row_instrumentation_frida"),
+            value = when {
+                fridaResult == null -> tr("value_frida_unavailable")
+                fridaResult.signalCount == 0 -> tr("value_not_detected")
+                fridaResult.signalCount == 1 -> tr("value_frida_possible")
+                else -> tr("value_frida_detected", fridaResult.signalCount.toString())
+            },
+            valueColor = when {
+                fridaResult == null -> Color.Gray
+                fridaResult.signalCount == 0 -> themeColor
+                fridaResult.signalCount == 1 -> Color(0xFFFFA500)
+                else -> Color.Red
+            },
+            themeColor = themeColor
+        )
+        PanelRow(
+            label = tr("row_about_these_checks"),
+            themeColor = themeColor,
+            showDivider = false,
+            onClick = { showIntegrityInfo = true }
+        )
+        if (showIntegrityInfo) {
+            AlertDialog(
+                onDismissRequest = { showIntegrityInfo = false },
+                confirmButton = {
+                    TextButton(onClick = { showIntegrityInfo = false }) {
+                        Text(tr("action_close"), color = themeColor, fontFamily = FontFamily.Monospace)
+                    }
+                },
+                title = { Text(tr("section_integrity_tamper"), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        modifier = Modifier
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(rememberScrollState()),
+                        text = tr("dialog_integrity_body"),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                }
+            )
         }
     }
 }

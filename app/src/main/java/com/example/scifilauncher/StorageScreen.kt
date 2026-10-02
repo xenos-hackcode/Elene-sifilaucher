@@ -6,10 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -45,52 +42,25 @@ fun StorageScreen(
     logs: List<IntruderCapture>,
     onBack: () -> Unit
 ) {
-    val bg = if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5)
-    val textColor = if (isDark) Color.White else Color.Black
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(bg)
+    TerminalScaffold(
+        themeColor = themeColor,
+        code = "STORAGE",
+        title = "Intruder attempts",
+        subtitle = "Every failed fingerprint scan on a device-owner confirmation, with photo and location if available.",
+        backLabel = "‹  SECURITY",
+        onBack = onBack
     ) {
-        MatrixBackground(
-            themeColor = themeColor,
-            isDark = isDark,
-            batteryMode = batteryMode
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onBack) {
-                    Text("< BACK")
-                }
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    text = "Intruder attempts",
-                    color = themeColor,
-                    fontSize = 18.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
+        TerminalCard(label = "CAPTURED ATTEMPTS (${logs.size})", themeColor = themeColor) {
             if (logs.isEmpty()) {
                 Text(
                     text = "No failed fingerprint attempts yet.",
-                    color = if (isDark) Color.LightGray else Color.DarkGray,
+                    color = TerminalStyle.muted,
+                    fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace
                 )
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(logs) { entry ->
-                        IntruderCaptureRow(entry, themeColor, textColor)
-                    }
+                logs.forEach { entry ->
+                    IntruderCaptureRow(entry, themeColor, TerminalStyle.ink)
                 }
             }
         }

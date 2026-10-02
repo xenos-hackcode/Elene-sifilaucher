@@ -1,5 +1,162 @@
 # Not started / not even touched yet
 
+## Xenos: full Shizuku shell-command control, fingerprint-gated (scoped 2026-09-03)
+
+User wants Xenos to have the same real level of system access I (Claude, over adb/USB) currently
+have on this device - "just the way u have soo much power when connected to it like usb" - not
+just the existing curated command allowlist. Real safety concern raised and discussed first:
+unlike an interactive adb session where the user watches and can stop every command in real time,
+Xenos would be an AI acting on voice commands with nobody watching each individual action - a
+misheard word or a bad LLM inference executing with full shell privilege could be irreversible.
+User's own proposed mitigation, given after hearing that concern: fingerprint-lock anything
+"truly dangerous". Claude's counter-proposal (not yet built or confirmed with the user in detail):
+gate **every** raw shell command through fingerprint confirmation, not just ones the AI judges as
+risky - reliably auto-classifying "dangerous vs safe" is itself a real failure point (a wrong call
+in the "safe" direction could be catastrophic; the cost of the safer default is just one extra
+fingerprint tap). Explicitly deferred in favor of finishing the in-progress Xenos face/expression
+work first - not built, not scoped in implementation detail yet.
+
+**Likely real building blocks already in this codebase** (not yet wired together for this):
+- `ShizukuManager.kt`/`ShizukuUserService.kt` - already-integrated real `adb shell`-equivalent
+  (UID "shell") privilege, used elsewhere in the app (WiFi scanning etc.) but never exposed as an
+  arbitrary-command channel.
+- `BiometricAuthActivity`'s `EXTRA_REASON`/`REASON_*` pattern - already used for exactly this kind
+  of "confirm a sensitive action with a fingerprint prompt" gate (motion-theft confirm, kiosk
+  unlock) - a new `REASON_SHELL_COMMAND` (or similar) would fit the same pattern.
+- The Updates screen's fingerprint-gated approval queue (Stage 1 of self-updating Elene) - a
+  closer structural match than a one-shot prompt, if a queued-then-approved model turns out to fit
+  voice-triggered shell commands better than blocking synchronously on a fingerprint tap.
+- Backend (`backend/elene/main.py`) would need a new command verb (e.g. `"shell:<command>"`) and,
+  per the user's own explicit follow-up ask, a "you have full control of the phone/system" line in
+  the system prompt's self-awareness section - deliberately NOT added yet, so the prompt doesn't
+  claim a capability that doesn't exist until this actually ships.
+
+**Real open questions, not resolved yet:**
+- Exactly what UX a fingerprint-gated voice command looks like (block-and-wait vs. queue-and-
+  notify vs. something else) - Xenos is mid-conversation when a shell command would fire, unlike
+  the Updates screen's async approval queue.
+- Whether "every shell command" is too much friction in practice once actually tried live, vs. the
+  user's original ask for the AI to decide per-command - not settled, just Claude's own safety-
+  first proposal so far, not user-confirmed.
+
+## Elene "create an app" = a real installable Android app, not just the HTML App Workshop (scoped 2026-09-25)
+
+User clarified that when they ask Elene to "create an app" (voice/chat request, not the on-device
+App Workshop UI), they mean the same thing I (Claude) do for this project itself - a real,
+installable Android app, not the App Workshop's HTML export (which just got offline+online modes
+added, see done.md, but is still fundamentally a browser document, not an APK). Real constraint
+raised and accepted before scoping further: a phone has no Android SDK/Gradle/compiler, so
+building an actual APK can never happen purely on-device - it has to happen somewhere with a real
+build toolchain, then get pushed to the phone as a finished, installable file.
+
+**User's chosen approach, asked for explicitly ("mixture of 1 and 2")**: two routes depending on
+the request, not one:
+1. **Backend build service** - for requests that fit a bounded, templated shape, the backend
+   (`backend/elene/main.py`, deployed on Cloud Run - see `feedback_backend_redeploy.md`) generates
+   source into a small, fixed Android project skeleton (one Activity, no arbitrary Gradle/manifest
+   editing - the generated part is bounded to app logic/UI, not the build config itself, to keep
+   the blast radius of LLM-generated code small), compiles it with a real Android SDK + Gradle
+   inside the backend's own environment, and produces a signed APK.
+2. **Escalate to Claude** - anything too open-ended/complex for the templated path (or anything the
+   backend's own build fails on) gets queued as a request for me to pick up and build the normal
+   way, same as any other task in this session.
+
+**Not built yet - real open pieces:**
+- The backend container currently has no Android SDK/Gradle inside it at all; adding one is a real,
+  sizeable build-environment change (JDK + cmdline-tools + a pinned SDK/build-tools version),
+  separate from anything Python-side already there.
+- A generated APK needs its own signing key, deliberately separate from the main SciFiLauncher
+  release/debug keys, so a bug in generated-app code can never be confused for or interact with the
+  launcher's own signing identity.
+- Reuse the Updates screen's existing fingerprint-gated approval queue (Stage 1 of self-updating
+  Elene, already built) as the install gate for BOTH routes above - a generated APK is executable
+  code, a materially bigger risk than the App Workshop's sandboxed `connect-src`-restricted HTML,
+  so it should never silent-auto-install even from the "backend built it successfully" path.
+- No decision yet on how route 1 vs. route 2 gets chosen for a given request (a fixed list of
+  templatable app shapes checked first, falling through to route 2 on no match, is the likely
+  design but not confirmed with the user).
+- A new backend command verb (e.g. `"build_app:<description>"`), distinct from the shell-command
+  verb scoped above, and its own line in the system prompt's self-awareness section once this
+  actually exists (same rule as above: don't claim the capability before it's real).
+
+**Update 2026-09-25 - built, blocked on billing, not the design.** All of the above got built for
+real this session: `propose_new_app`/`ProposalKind.NEW_APP` end-to-end on the phone (MainActivity,
+UpdateProposalLog, UpdatesScreen badge), a new `MyAppsScreen.kt` (Security > My Apps) showing each
+request's real build status plus a live countdown to the routine's next scheduled check, backend
+endpoints (`submit_new_app_request`, `report_new_app_build_result`, `new_app_status`), a "plan the
+app with the user before queuing" system-prompt requirement, a NEW narrowly-scoped GCP service
+account (`elene-new-app-builder` - Cloud Build + the `android-builds` bucket only, no Cloud Run
+deploy permission, unlike the sibling self-update key), and a separate scheduled cloud routine
+("SciFiLauncher new-app request pipeline", every 4 hours) the user created manually via the
+claude.ai routines UI (RemoteTrigger's own `create` call refused to embed the live key itself -
+correctly flagged as a data-exfiltration pattern - so the user pasted the routine's prompt+key in
+themselves, the one part of this that genuinely needed a human hand).
+
+**Currently blocked, not a bug**: `cedal-fd4a2`'s GCP billing is disabled until 2026-10-01 (the
+user's own account situation, unrelated to anything built here) - `gcloud run deploy` fails with a
+real `PERMISSION_DENIED: billing not enabled` error. This means:
+- The backend deploy carrying the two new endpoints above hasn't gone out yet - they exist in
+  `backend/elene/main.py` on disk/committed, just not live on Cloud Run.
+- The routine's own addendum step (POSTing its build result back to
+  `report_new_app_build_result` - see `C:\tmp\elene_new_app_routine_addendum.txt`, given to the
+  user to paste into the already-created routine) hasn't been added yet either, on purpose - no
+  point wiring it to an endpoint that isn't live.
+- User's explicit call: hold all of this until billing resumes 2026-10-01, and work on
+  device/local-only tasks in the meantime rather than pushing on the backend deploy.
+- Once billing is back: deploy the backend (`gcloud run deploy elene-backend --source
+  backend/elene --region us-central1 --quiet --project cedal-fd4a2`), confirm the two new
+  endpoints respond, have the user paste the routine addendum in, then the whole "create an app"
+  flow is live end-to-end and ready for a real first test.
+
+## Network history: past connected networks + their location (scoped 2026-08-28)
+
+A new screen/feature - "Network" - showing every WiFi network this device has connected to,
+each with the real-world location it was connected at (reusing the existing LocationHistory.kt
+persistence pattern this app already uses elsewhere, cross-referenced against WifiStatus.kt's
+connection events). Explicitly deferred by the user in favor of finishing gesture control first
+- not scoped in detail yet (exact UI, how far back to retain, whether it's a live growing log or
+a fixed list) - revisit when picked up.
+
+## Globe: sparse colored location markers/pins (scoped 2026-08-28)
+
+A distinct globe mode from the dot-lattice ones already built (see done.md) - a few scattered
+colored dots/pins on a plain black sphere marking specific locations (not a dense grid tracing
+every continent's outline like the lattice modes). Explicitly deferred by the user ("used for
+something else, jot it down") rather than built now. Likely the natural fit for surfacing actual
+data points once the flight/marine/transit tracking below exists - each live flight/vessel as its
+own marker - but that connection wasn't confirmed, just the visual concept itself.
+
+## 3D world globe + live flight/marine/transit tracking (scoped 2026-08-27)
+
+Real-time 3D globe visualization, approach agreed but not built: Kotlin + an embedded WebView
+running Three.js (WebGL), bundled as a local asset rather than fetched from a CDN (matches this
+app's existing avoidance of external runtime dependencies elsewhere). Data in via a Kotlin<->JS
+bridge (`addJavascriptInterface` + a small postMessage-style callback channel) feeding live
+coordinates into the scene. Rated a strong fit specifically because Three.js already solves the
+hard parts (sphere rendering, camera controls, lat/lng-to-3D projection) that would be painful to
+hand-roll in native Android OpenGL - the real remaining work is the data layer, not the rendering.
+
+Data sources discussed, none integrated yet: flights (Flightradar24, FlightAware, ADS-B
+Exchange/JetNet, OpenSky Network), marine vessels (MarineTraffic, VesselFinder, FleetMon), transit
+(Citymapper, Moovit, Transit App). Each of these needs its own account/API-key setup and rate-limit
+research before wiring in - not evaluated yet.
+
+## CCTV/OSINT: two legitimate alternatives, in place of the declined "browse public cameras" ask
+
+Context: the user asked to integrate Insecam/Shodan/Censys/ZoomEye/FOFA/BinaryEdge/Netlas/
+GreyNoise to browse exposed CCTV cameras worldwide - declined as a built-in feature (see
+done.md's gesture-control entry for the full reasoning: those are other people's private cameras,
+exposed by misconfiguration rather than by the owner's intent to publish, and browsing them isn't
+a scoped authorized-security use case). Two alternatives were agreed instead:
+
+- **Self-exposure audit**: use the same OSINT engines' own APIs (Shodan, Censys, etc. - each needs
+  its own account/API key, not evaluated yet) to check what of the *user's own* IPs/devices shows
+  up exposed - a legitimate, common defensive-security practice. Not built.
+- **Public webcam viewer**: cameras their owners actually published for public viewing - EarthCam,
+  Windy.com's webcam API, official tourism-board/city traffic cams, skiresort.info. Not built, no
+  API research done yet.
+
+
 *Deepened 2026-07-26. Each item below now includes what it actually involves technically, why it
 hasn't started, what it depends on, and what decision (if any) is blocking it — not just a
 one-line description. The goal is that a future session can read this and know exactly where to

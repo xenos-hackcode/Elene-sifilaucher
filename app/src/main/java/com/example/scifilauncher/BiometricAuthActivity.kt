@@ -26,8 +26,9 @@ class BiometricAuthActivity : FragmentActivity() {
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    if (intent.getStringExtra(EXTRA_REASON) == REASON_MOTION_CONFIRM) {
-                        MotionTheftDetector.onConfirmed(applicationContext)
+                    when (intent.getStringExtra(EXTRA_REASON)) {
+                        REASON_MOTION_CONFIRM -> MotionTheftDetector.onConfirmed(applicationContext)
+                        REASON_KIOSK_UNLOCK -> ScifiAccessibilityService.instance?.dismissKioskLockCover()
                     }
                     setResult(RESULT_OK)
                     finish()
@@ -96,5 +97,6 @@ class BiometricAuthActivity : FragmentActivity() {
         const val EXTRA_SUBTITLE = "com.example.scifilauncher.extra.BIOMETRIC_SUBTITLE"
         const val EXTRA_REASON = "com.example.scifilauncher.extra.BIOMETRIC_REASON"
         const val REASON_MOTION_CONFIRM = "motion_confirm"
+        const val REASON_KIOSK_UNLOCK = "kiosk_unlock"
     }
 }

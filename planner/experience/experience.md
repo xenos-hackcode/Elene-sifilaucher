@@ -1151,6 +1151,49 @@
   flagged as needing the user's explicit decision, not treated as automatically following from
   today's proof.
 
+## Elene "unhide screen" phrasing fix (2026-08-31)
+User told Xenos/Elene "unhide screen" via chat and it wasn't understood - the `hide_page` system
+prompt entry only documented the hide-direction phrasing ("hide page") and didn't mention that the
+same toggle command also handles the un-hide direction. Updated `backend/elene/main.py`'s command
+list entry for `hide_page` to explicitly list unhide-direction phrasings ("unhide screen", "show my
+screen", "reveal the screen", "bring the screen back", "stop hiding") and state plainly there is no
+separate unhide/show command - it's always `hide_page` either way.
+Compiled clean (`python -m py_compile main.py`) before deploying. Deployed via
+`gcloud run deploy elene-backend --source . --region us-central1 --project cedal-fd4a2 --quiet`,
+revision `elene-backend-00052-xtk`, 100% traffic. Real smoke test against the live URL, not assumed:
+`POST /elene/chat {"user_id":"smoketest","text":"unhide screen","context":{}}` returned
+`{"intent":"command","command":"hide_page","commands":["hide_page"],"reply":"Unhiding the screen
+now, Emperor."}` - confirmed working. Regression-checked the original phrasing too: `"hide the
+screen"` still correctly returns `command":"hide_page"` with a hide-flavored reply. Both directions
+confirmed live.
+
+## find_my_location Elene command (2026-08-31)
+Added a real safety-tool voice command alongside the new MyLocationActivity screen (a live GPS map
+for someone genuinely lost - see combination.md for the full feature). Backend prompt's command
+list now documents `find_my_location` for phrases like "I'm lost"/"where am I"/"find my location",
+explicitly told to treat it as urgent and not ask clarifying questions first. Compiled clean
+(`python -m py_compile main.py`), deployed via `gcloud run deploy elene-backend --source . --region
+us-central1 --project cedal-fd4a2 --quiet`, revision `elene-backend-00054-vtb`, 100% traffic. Real
+smoke test against the live URL: `POST /elene/chat {"user_id":"smoketest4","text":"i am lost,
+where am I","context":{}}` returned `{"intent":"command","command":"find_my_location",
+"commands":["find_my_location"],"reply":"Finding your location now, Emperor."}` - confirmed
+working.
+
+## Xenos "emotion" field (2026-09-03)
+Added a real "emotion" field ("smile"/"frown"/"curious"/"neutral") to the `/elene/chat` JSON
+schema and reply model, with a new "Your face" system-prompt section telling Xenos it has a real
+visual face on the Xenos screen and instructing it to set the field to its genuine reaction, not a
+forced/default value. Client (`EleneApiClient.EleneResponse.emotion`, `XenosActivity`,
+`XenosSkeleton`) drives the skeleton's mouth-curve/head-tilt from this - replaces an earlier
+client-only "smile" keyword hack with a real backend-driven multi-expression system. Compiled
+clean, deployed via the standard `gcloud run deploy` command, revision `elene-backend-00055-nwd`,
+100% traffic. Real smoke tests against the live URL, three cases:
+- "you just told me a great joke and I am laughing" -> `"emotion":"smile"`
+- "my dog just died and I feel awful" -> `"emotion":"frown"`
+- "wait what does that error message even mean, im so confused" -> `"emotion":"curious"`
+All three confirmed correct and distinct - the field genuinely reflects context, not a fixed
+default.
+
 ## Standing meta-note from the user (2026-07-26)
 User explicitly flagged that we were "bouncing from one thing to another" - building fix after
 fix without confirming each one actually works before moving to the next. This planner exists

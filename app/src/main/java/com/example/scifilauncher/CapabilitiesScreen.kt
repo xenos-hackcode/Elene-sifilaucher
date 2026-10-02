@@ -3,8 +3,6 @@ package com.example.scifilauncher
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -139,48 +137,18 @@ fun CapabilitiesScreen(
 ) {
     var infoFor by remember { mutableStateOf<CapabilityInfo?>(null) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
+    Box(modifier = Modifier.fillMaxSize()) {
+        TerminalScaffold(
+            themeColor = themeColor,
+            code = "CAPS",
+            title = "What this app can do",
+            subtitle = "Every permission this app holds, what it's actually used for, and where turning it on/off happens. Tap (i) on anything for the full explanation.",
+            backLabel = "‹  SETTINGS",
+            onBack = onBack
         ) {
-            Text(
-                text = "< BACK",
-                color = themeColor,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(bottom = 12.dp)
-            )
-            Text(
-                text = "WHAT THIS APP CAN DO",
-                color = themeColor,
-                fontSize = 18.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                text = "Every permission this app holds, what it's actually used for, and where " +
-                        "turning it on/off happens - the phone's real Settings app, or this app's " +
-                        "own Settings/Security. Tap (i) on anything for the full explanation.",
-                color = Color.Gray,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 12.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(themeColor.copy(alpha = 0.14f))
                     .clickable(onClick = onOpenDownload)
@@ -190,7 +158,7 @@ fun CapabilitiesScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Download",
-                        color = if (isDark) Color.White else Color.Black,
+                        color = TerminalStyle.ink,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
@@ -198,7 +166,7 @@ fun CapabilitiesScreen(
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = "Link to PC / Link to Phone - get or share the agent apps",
-                        color = Color.Gray,
+                        color = TerminalStyle.muted,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
@@ -213,8 +181,8 @@ fun CapabilitiesScreen(
                 )
             }
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(CAPABILITIES) { cap ->
+            TerminalCard(label = "CAPABILITIES (${CAPABILITIES.size})", themeColor = themeColor) {
+                CAPABILITIES.forEach { cap ->
                     CapabilityRow(cap, themeColor, isDark) { infoFor = cap }
                 }
             }

@@ -43,6 +43,7 @@ fun SettingsScreen(
     onOpenMoreApps: () -> Unit,
     onOpenCapabilities: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenWallpaper: () -> Unit,
     onRequestBiometricForWifiPassword: (onSuccess: () -> Unit) -> Unit,
     onDarkModeChange: (DarkModeOption) -> Unit = {},
     currentIconPackPkg: String? = null,
@@ -163,6 +164,11 @@ fun SettingsScreen(
                         onClick = { showThemePanel = true }
                     )
                     PanelRow(
+                        label = "Wallpaper",
+                        themeColor = themeColor,
+                        onClick = onOpenWallpaper
+                    )
+                    PanelRow(
                         label = tr("row_font_size"),
                         themeColor = themeColor,
                         value = when (fontSizeOption) {
@@ -186,6 +192,9 @@ fun SettingsScreen(
                 }
 
                 PanelSection(title = tr("section_network"), themeColor = themeColor) {
+                    PanelRow(label = "VPN & tracker protection", themeColor = themeColor,
+                        value = "Free server directory · connection controls",
+                        onClick = { context.startActivity(Intent(context, NetworkProtectionActivity::class.java)) })
                     var wifiStatus by remember { mutableStateOf(currentWifiStatus(context)) }
                     var revealedPassword by remember { mutableStateOf<String?>(null) }
                     var revealFailReason by remember { mutableStateOf<String?>(null) }

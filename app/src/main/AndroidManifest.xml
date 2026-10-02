@@ -11,9 +11,15 @@
          with no crash or log to explain why. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- MyAppsScreen's install step - hands a downloaded generated-app APK to Android's own
+         "install unknown app" prompt via ACTION_VIEW, the user's own explicitly chosen tap-to-
+         install flow (not a silent Device Owner install). Required on API 26+ for that prompt to
+         even appear when this app itself is the one launching the install intent. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -27,6 +33,19 @@
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Real evidence via `dumpsys appops`: this app's FINE_LOCATION grant is "foreground" mode
+         only, but ScifiAccessibilityService's WiFi callback (NetworkHistory) fires from a
+         background service context - WifiInfo stayed redacted even with NEARBY_WIFI_DEVICES
+         granted until this was added too. Requesting it silently follows this same one, not
+         bundled together - Android requires a separate ask for background location regardless
+         of NEARBY_WIFI_DEVICES already being present. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Android 13+ (confirmed on this device: Android 16/API 36) redacts real SSID/BSSID from
+         WifiInfo/NetworkCapabilities.getTransportInfo() unless the app holds this too - plain
+         ACCESS_FINE_LOCATION is no longer sufficient by itself, confirmed live via a diagnostic
+         log showing "<unknown ssid>"/a randomized BSSID despite location being fully granted.
+         See NetworkHistory.kt / ScifiAccessibilityService's wifiNetworkCallback. -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -47,6 +66,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Touchless gesture control: on-device hand tracking over the front camera while armed -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
     <!-- Lets this app prompt the system's real "ignore battery optimizations" dialog on
          behalf of a known Cedal sibling app (e.g. Cedal SMS), so it can keep running in the
@@ -79,7 +100,7 @@
     </queries>
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -101,10 +122,15 @@
         </provider>
 
         <!-- Main launcher / home activity -->
+        <activity android:name=".SafetyToolsActivity" android:exported="false" />
+        <activity android:name=".NetworkProtectionActivity" android:exported="false" />
+        <activity android:name=".AppStarterActivity" android:exported="false" />
+        <receiver android:name=".SafetyCheckInReceiver" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.SciFiLauncher">
 
             <intent-filter>
@@ -116,6 +142,60 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Plain View-hosted globe isolation screen. If this renders on Samsung/One UI while
+             GlobeScreen's Compose AndroidView path stays black, the failure is isolated to
+             WebView surface composition inside Compose rather than Three.js/WebGL/assets. -->
+        <activity
+            android:name=".GlobeActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
+
+        <!-- Globe wallpaper (Settings > Wallpaper > Live/Video/Image "Globe") - same reasoning as
+             GlobeActivity above: a plain Activity, not Compose's AndroidView, since that path is
+             confirmed to composite as solid black on this device. -->
+        <activity
+            android:name=".GlobeWallpaperActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
+
+        <!-- Real live-GPS map ("find my current location", not the decorative Globe) - see
+             MyLocationActivity for why this is a separate screen. -->
+        <activity
+            android:name=".MyLocationActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
+
+        <!-- The Reactor - visual home for the AI (red dotted-glow-rim, reused from globe.js)
+             plus a multimodal chat (text/voice/photo/image file). See XenosActivity. -->
+        <activity
+            android:name=".XenosActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
+
+        <!-- Gesture training: lists every trainable gesture and its status -->
+        <activity
+            android:name=".GestureListActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
+
+        <!-- Gesture training: real front-camera + hand-tracking recording screen for one
+             gesture at a time -->
+        <activity
+            android:name=".GestureTrainingActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.SciFiLauncher" />
 
         <!-- Dedicated host for BiometricPrompt (needs a FragmentActivity, kept isolated
              from MainActivity - see BiometricAuthActivity for why) -->
@@ -212,11 +292,36 @@
         <service
             android:name=".TrackerBlockVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
+            android:exported="true">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled local DNS tracker and advertisement filtering" />
+            <meta-data android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON" android:value="false" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Real WireGuard VPN client (VpnClientActivity/WireGuardVpnManager) - GoBackend's own
+             VpnService, required by the official library so it can own the tunnel lifecycle
+             itself. -->
+        <service
+            android:name="com.wireguard.android.backend.GoBackend$VpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+        <activity
+            android:name=".VpnClientActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".TrackerExceptionsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <!-- Eye Comfort Shield: warm-tint overlay window, real SYSTEM_ALERT_WINDOW usage
              rather than relying on an OEM night-light toggle that may not exist/enforce -->
@@ -268,6 +373,15 @@
             android:name=".VoiceMemoService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Touchless gesture control: front-camera hand tracking (MediaPipe, on-device) while
+             explicitly armed from Settings - real swipe/pinch detection dispatched through
+             ScifiAccessibilityService's existing gesture machinery. Only runs while armed, never
+             silently. -->
+        <service
+            android:name=".HandGestureService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
 
         <!-- Real cellular call decline - only functional once the user grants this app
              RoleManager.ROLE_CALL_SCREENING (a real system role prompt, not something Device

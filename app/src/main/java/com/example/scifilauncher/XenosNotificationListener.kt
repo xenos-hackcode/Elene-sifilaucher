@@ -153,11 +153,22 @@ class XenosNotificationListener : NotificationListenerService() {
             lastMessageInfo = msg
             hasUnreadMessage = true
 
-            missedNotifications.add(msg)
-            // Raised from 50 - this list is already in-memory only (lost on process death, not
-            // persisted to disk), so a higher cap costs a bit more RAM, not storage.
-            if (missedNotifications.size > 300) {
-                missedNotifications.removeAt(0)
+            // A persistent status notification (VPN connected, an ongoing call, a foreground
+            // service) reposts itself repeatedly with the exact same title/text - that's not a
+            // new missed notification each time, just Android re-delivering the same one. Only
+            // guard against the immediately-preceding entry (not a global/package-wide dedupe),
+            // so genuinely repeated real messages from a chat app still all show up.
+            val isRepost = missedNotifications.lastOrNull()?.let {
+                it.packageName == pkg && it.title == title && it.text == text
+            } == true
+            if (!isRepost) {
+                missedNotifications.add(msg)
+                // Raised from 50, then 300 - this list is already in-memory only (lost on
+                // process death, not persisted to disk), so a higher cap costs a bit more RAM,
+                // not storage.
+                if (missedNotifications.size > 999) {
+                    missedNotifications.removeAt(0)
+                }
             }
 
             val replyAction = findDirectReplyAction(notification)

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Xenos Globe</title>
+    <!-- Suppresses the browser's automatic favicon.ico probe, which would otherwise fall
+         through the asset interceptor to a real (failing) network request every load. -->
+    <link rel="icon" href="data:,">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #globe-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #loading-label {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #09c20c;
+            font-family: monospace;
+            font-size: 14px;
+            letter-spacing: 2px;
+            opacity: 1;
+            transition: opacity 0.6s ease;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="globe-canvas"></canvas>
+    <div id="loading-label">LOADING EARTH...</div>
+    <!-- OrbitControls.js imports the bare specifier "three" (as published on npm/unpkg, meant
+         to be resolved by a bundler) - this import map is what lets a plain browser/WebView
+         with no bundler resolve that to the vendored local module instead. Must come before any
+         module script that uses it. -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./vendor/three.module.js"
+        }
+    }
+    </script>
+    <script type="module">
+        import './globe.js';
+        setTimeout(() => {
+            const el = document.getElementById('loading-label');
+            if (el) el.style.opacity = '0';
+        }, 900);
+    </script>
+</body>
+</html>

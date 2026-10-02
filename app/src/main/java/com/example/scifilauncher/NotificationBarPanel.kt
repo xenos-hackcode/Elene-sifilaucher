@@ -148,7 +148,10 @@ data class ExtraControlActions(
     val onOpenSecureFolder: () -> Unit,
     val onOpenAudioBroadcast: () -> Unit,
     val onBrightnessChange: (Int) -> Unit,
-    val onOpenNearbyDevices: () -> Unit
+    val onOpenNearbyDevices: () -> Unit,
+    val onOpenGlobe: () -> Unit,
+    val onOpenMyLocation: () -> Unit,
+    val onOpenReactor: () -> Unit
 )
 
 /** Shared drag-to-close + scrim wrapper - drag up beyond the threshold, or tap the scrim,
@@ -574,7 +577,15 @@ private fun QuickSettingsPanelBody(
             ControlTileSpec("⧉", "MULTI CONTROL", false, extraActions.onOpenMultiControl),
             ControlTileSpec("🔒", "SECURE FOLDER", false, extraActions.onOpenSecureFolder),
             ControlTileSpec(")))", "AUDIO BROADCAST", false, extraActions.onOpenAudioBroadcast),
-            ControlTileSpec("WFC", "WIFI CALLING", false, extraActions.onOpenWifiCalling)
+            ControlTileSpec("WFC", "WIFI CALLING", false, extraActions.onOpenWifiCalling),
+            ControlTileSpec("🌐", "GLOBE", false, extraActions.onOpenGlobe),
+            // Real safety tool (live GPS on a real street map, see MyLocationActivity) -
+            // deliberately a one-tap quick-settings entry, not buried behind a voice command
+            // someone lost/panicked might not think to say.
+            ControlTileSpec("⌱", "MY LOCATION", false, extraActions.onOpenMyLocation),
+            // Visual home for the AI + multimodal chat (text/voice/photo/file) - see
+            // XenosActivity.
+            ControlTileSpec("☢", "XENOS", false, extraActions.onOpenReactor)
         )
 
         tiles.chunked(4).forEach { rowTiles ->

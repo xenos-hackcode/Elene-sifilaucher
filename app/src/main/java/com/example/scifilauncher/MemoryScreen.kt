@@ -1,10 +1,7 @@
 package com.example.scifilauncher
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,55 +33,28 @@ fun MemoryScreen(
     onBack: () -> Unit,
     onForget: (RememberedFact) -> Unit
 ) {
-    val textColor = if (isDark) Color.White else Color.Black
     val sdf = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
     var pendingForget by remember { mutableStateOf<RememberedFact?>(null) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
+    Box(modifier = Modifier.fillMaxSize()) {
+        TerminalScaffold(
+            themeColor = themeColor,
+            code = "MEMORY",
+            title = "Memory",
+            subtitle = "Everything you've told Xenos to remember - tap ✕ to forget an entry.",
+            backLabel = "‹  SETTINGS",
+            onBack = onBack
         ) {
-            Text(
-                text = "< BACK",
-                color = themeColor,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(bottom = 12.dp)
-            )
-            Text(
-                text = "MEMORY",
-                color = themeColor,
-                fontSize = 18.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                text = "Everything you've told Xenos to remember - tap ✕ to forget an entry.",
-                color = Color.Gray,
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            if (entries.isEmpty()) {
-                Text(
-                    text = "Nothing remembered yet - say \"remember that...\" to Xenos.",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(entries) { entry ->
+            TerminalCard(label = "REMEMBERED (${entries.size})", themeColor = themeColor) {
+                if (entries.isEmpty()) {
+                    Text(
+                        text = "Nothing remembered yet - say \"remember that...\" to Xenos.",
+                        color = TerminalStyle.muted,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                } else {
+                    entries.forEach { entry ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -94,13 +64,13 @@ fun MemoryScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = entry.text,
-                                    color = textColor,
+                                    color = TerminalStyle.ink,
                                     fontSize = 14.sp,
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
                                     text = sdf.format(Date(entry.timestamp)),
-                                    color = Color.Gray,
+                                    color = TerminalStyle.muted,
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace,
                                     modifier = Modifier.padding(top = 2.dp)

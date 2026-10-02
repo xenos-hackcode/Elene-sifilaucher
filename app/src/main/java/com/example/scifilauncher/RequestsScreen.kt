@@ -3,8 +3,6 @@ package com.example.scifilauncher
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,64 +31,39 @@ fun RequestsScreen(
     onBack: () -> Unit
 ) {
     var filter by remember { mutableStateOf<ActionRequestStatus?>(null) }
-    val textColor = if (isDark) Color.White else Color.Black
     val filtered = remember(entries, filter) {
         if (filter == null) entries else entries.filter { it.status == filter }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5))
+    TerminalScaffold(
+        themeColor = themeColor,
+        code = "REQUESTS",
+        title = "Requests",
+        subtitle = "Every device-owner-level action this app has ever asked to take, and how it was resolved.",
+        backLabel = "‹  BACK",
+        onBack = onBack
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = "< BACK",
-                color = themeColor,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(bottom = 12.dp)
-            )
-            Text(
-                text = "REQUESTS",
-                color = themeColor,
-                fontSize = 18.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip("ALL", filter == null, themeColor) { filter = null }
-                FilterChip("PENDING", filter == ActionRequestStatus.PENDING, themeColor) { filter = ActionRequestStatus.PENDING }
-                FilterChip("APPROVED", filter == ActionRequestStatus.APPROVED, themeColor) { filter = ActionRequestStatus.APPROVED }
-                FilterChip("DENIED", filter == ActionRequestStatus.DENIED, themeColor) { filter = ActionRequestStatus.DENIED }
-                FilterChip("SNOOZED", filter == ActionRequestStatus.SNOOZED, themeColor) { filter = ActionRequestStatus.SNOOZED }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
+            FilterChip("ALL", filter == null, themeColor) { filter = null }
+            FilterChip("PENDING", filter == ActionRequestStatus.PENDING, themeColor) { filter = ActionRequestStatus.PENDING }
+            FilterChip("APPROVED", filter == ActionRequestStatus.APPROVED, themeColor) { filter = ActionRequestStatus.APPROVED }
+            FilterChip("DENIED", filter == ActionRequestStatus.DENIED, themeColor) { filter = ActionRequestStatus.DENIED }
+            FilterChip("SNOOZED", filter == ActionRequestStatus.SNOOZED, themeColor) { filter = ActionRequestStatus.SNOOZED }
+        }
+        TerminalCard(label = "REQUESTS (${filtered.size})", themeColor = themeColor) {
             if (filtered.isEmpty()) {
                 Text(
                     text = "No requests yet.",
-                    color = Color.Gray,
+                    color = TerminalStyle.muted,
                     fontSize = 13.sp,
                     fontFamily = FontFamily.Monospace
                 )
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(filtered) { entry ->
-                        RequestRow(entry, themeColor, textColor)
-                    }
+                filtered.forEach { entry ->
+                    RequestRow(entry, themeColor, TerminalStyle.ink)
                 }
             }
         }

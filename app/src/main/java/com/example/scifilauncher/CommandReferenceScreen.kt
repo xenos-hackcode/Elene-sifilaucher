@@ -1,10 +1,6 @@
 package com.example.scifilauncher
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -55,67 +51,38 @@ fun CommandReferenceScreen(
     isDark: Boolean,
     onBack: () -> Unit
 ) {
-    val textColor = if (isDark) Color.White else Color.Black
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDark) Color(0xFF050505) else Color(0xFFF5F5F5))
+    TerminalScaffold(
+        themeColor = themeColor,
+        code = "COMMANDS",
+        title = "Commands",
+        subtitle = "Everything Xenos can be told to do, and roughly how to say it.",
+        backLabel = "‹  BACK",
+        onBack = onBack
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-        ) {
-            Text(
-                text = "< BACK",
-                color = themeColor,
-                fontSize = 14.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .clickable(onClick = onBack)
-                    .padding(bottom = 12.dp)
-            )
-            Text(
-                text = "COMMANDS",
-                color = themeColor,
-                fontSize = 18.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                text = "Everything Xenos can be told to do, and roughly how to say it.",
-                color = Color.Gray,
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(ELENE_COMMANDS) { doc ->
-                    Column(modifier = Modifier.padding(vertical = 10.dp)) {
-                        Text(
-                            text = doc.command,
-                            color = themeColor,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                        Text(
-                            text = doc.sayThis,
-                            color = textColor.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                        Text(
-                            text = doc.whatItDoes,
-                            color = textColor,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
+        TerminalCard(label = "REFERENCE (${ELENE_COMMANDS.size})", themeColor = themeColor) {
+            ELENE_COMMANDS.forEachIndexed { index, doc ->
+                Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                    Text(
+                        text = doc.command,
+                        color = themeColor,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = doc.sayThis,
+                        color = TerminalStyle.muted,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    Text(
+                        text = doc.whatItDoes,
+                        color = TerminalStyle.ink,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
                 }
             }
         }

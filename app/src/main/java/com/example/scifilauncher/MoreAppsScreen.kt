@@ -31,64 +31,27 @@ fun MoreAppsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val textColor = if (isDark) Color.White else Color.Black
     val baseFontSize = fontSize.sp
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = if (isDark) Color(0xFF050710) else Color(0xFFF2F2F2)
+    TerminalScaffold(
+        themeColor = themeColor,
+        code = "APPS",
+        title = "More apps",
+        subtitle = "",
+        backLabel = "‹  SETTINGS",
+        onBack = onBack
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 40.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            Text(
-                text = "< BACK",
-                color = themeColor,
-                fontSize = baseFontSize,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.clickable { onBack() }
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "MORE APPS",
-                color = themeColor,
-                fontSize = (baseFontSize.value + 4).sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "Released",
-                color = themeColor,
-                fontSize = (baseFontSize.value + 1).sp,
-                fontFamily = FontFamily.Monospace
-            )
-
-            AppItem("SciFiLauncher – Xenos", "Released", textColor, baseFontSize) {
+        TerminalCard(label = "RELEASED", themeColor = themeColor) {
+            AppItem("SciFiLauncher – Xenos", "Released", TerminalStyle.ink, baseFontSize) {
                 val uri = Uri.parse("https://play.google.com/store")
                 context.startActivity(Intent(Intent.ACTION_VIEW, uri))
             }
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = "In development",
-                color = themeColor,
-                fontSize = (baseFontSize.value + 1).sp,
-                fontFamily = FontFamily.Monospace
-            )
-
-            AppItem("Cedal Mobile", "In progress", textColor, baseFontSize)
-            AppItem("Elene AI", "Prototype", textColor, baseFontSize)
-            AppItem("SYSTEM", "Coming soon", textColor, baseFontSize)
+        TerminalCard(label = "IN DEVELOPMENT", themeColor = themeColor) {
+            AppItem("Cedal Mobile", "In progress", TerminalStyle.ink, baseFontSize)
+            AppItem("Elene AI", "Prototype", TerminalStyle.ink, baseFontSize)
+            AppItem("SYSTEM", "Coming soon", TerminalStyle.ink, baseFontSize)
         }
     }
 }

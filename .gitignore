@@ -35,3 +35,5 @@ laptop_agent/dist/
 .claude/
 .vscode/
 .kotlin/
+# Local verification dependencies and output
+.validation/

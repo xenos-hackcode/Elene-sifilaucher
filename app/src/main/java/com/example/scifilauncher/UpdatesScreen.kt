@@ -159,15 +159,17 @@ private fun UpdateRow(entry: UpdateProposalEntry, themeColor: Color, textColor: 
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                val badgeColor = if (entry.kind == ProposalKind.NEW_APP) Color(0xFF00B8D4) else categoryColor(entry.category)
+                val badgeLabel = if (entry.kind == ProposalKind.NEW_APP) "NEW APP" else categoryLabel(entry.category)
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(4.dp))
-                        .background(categoryColor(entry.category).copy(alpha = 0.2f))
+                        .background(badgeColor.copy(alpha = 0.2f))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = categoryLabel(entry.category),
-                        color = categoryColor(entry.category),
+                        text = badgeLabel,
+                        color = badgeColor,
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace
                     )

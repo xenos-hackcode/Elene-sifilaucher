@@ -2,6 +2,8 @@
 
 package com.example.scifilauncher
 
+import androidx.compose.runtime.collectAsState
+
 import android.content.*
 import android.util.Log
 import android.content.pm.PackageManager
@@ -283,6 +285,60 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
     ) { /* NearbyDevicesScreen re-reads hasNearbyDevicesPermissions() on recompose */ }
 
+    // Device Owner installs already have CAMERA silently granted (grantAllDangerousPermissionsSilently),
+    // but this app is also meant to run without Device Owner - this is the real interactive
+    // fallback for that case, only actually shown when the silent grant didn't happen. Mirrors
+    // screenRecordActiveState's callback-field pattern above for pushing an async permission
+    // result back into the Settings switch's Compose state.
+    private var gestureControlActiveState: ((Boolean) -> Unit)? = null
+    private val gestureControlPermissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startGestureControlService()
+            gestureControlActiveState?.invoke(true)
+        } else {
+            reportPermissionDenied("Gesture control (camera)")
+            gestureControlActiveState?.invoke(false)
+        }
+    }
+
+    private fun startGestureControlService() {
+        val intent = Intent(this, HandGestureService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopGestureControlService() {
+        runCatching {
+            startService(Intent(this, HandGestureService::class.java).setAction(HandGestureService.ACTION_STOP))
+        }
+    }
+
+    /** Turning gesture control on/off from Settings - checks CAMERA first since Device Owner
+     * installs already have it silently granted but non-Device-Owner ones don't, requesting it
+     * interactively only when actually needed (see gestureControlPermissionLauncher above). */
+    private fun toggleGestureControl(enable: Boolean, onResult: (Boolean) -> Unit) {
+        if (!enable) {
+            stopGestureControlService()
+            onResult(false)
+            return
+        }
+        val hasCameraPermission = ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (hasCameraPermission) {
+            startGestureControlService()
+            onResult(true)
+        } else {
+            gestureControlActiveState = onResult
+            runCatching { gestureControlPermissionLauncher.launch(android.Manifest.permission.CAMERA) }
+                .onFailure { onResult(false) }
+        }
+    }
+
     private val callScreeningRoleLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { /* SecurityScreen re-reads hasCallScreeningRole() on the next tap/recompose - the role
@@ -321,7 +377,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
     ) { result ->
         Log.d("TrackerBlockVpn", "Consent dialog result: resultCode=${result.resultCode}")
         if (result.resultCode == RESULT_OK) {
-            startService(Intent(this, TrackerBlockVpnService::class.java))
+            TrackerBlockVpnService.start(this)
         } else {
             reportPermissionDenied("Tracker & ad blocking", retry = { toggleTrackerBlocking(true) })
         }
@@ -420,6 +476,13 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             add(android.Manifest.permission.READ_CALL_LOG)
             add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             add(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                // Real evidence via dumpsys appops: foreground-only FINE_LOCATION isn't enough
+                // for ScifiAccessibilityService's WiFi callback (a background context) to get
+                // real SSID/BSSID - confirmed live, not assumed. Listed after FINE/COARSE
+                // deliberately - background location is only grantable once foreground already is.
+                add(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 add(android.Manifest.permission.ANSWER_PHONE_CALLS)
             }
@@ -429,6 +492,9 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
             }
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                 add(android.Manifest.permission.POST_NOTIFICATIONS)
+                // Real SSID/BSSID (NetworkHistory's WiFi callback) is redacted without this on
+                // Android 13+ - confirmed live via diagnostic logging, not assumed.
+                add(android.Manifest.permission.NEARBY_WIFI_DEVICES)
             }
             if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
                 add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
@@ -749,8 +815,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
 
     private fun toggleTrackerBlocking(enable: Boolean) {
         if (!enable) {
-            Log.d("TrackerBlockVpn", "Stopping tracker-block service")
-            stopService(Intent(this, TrackerBlockVpnService::class.java))
+            Log.d("TrackerBlockVpn", "Stopping tracker-block service (self-stop action)")
+            // Context.stopService() alone doesn't reliably tear this down - see
+            // TrackerBlockVpnService.ACTION_STOP for the real root cause (the OS's own VPN
+            // framework holds an independent binding to this service). Sending this action makes
+            // the service stop itself from inside its own onStartCommand instead.
+            runCatching {
+                startService(Intent(this, TrackerBlockVpnService::class.java).setAction(TrackerBlockVpnService.ACTION_STOP))
+            }.onFailure { Log.e("TrackerBlockVpn", "Failed to send ACTION_STOP", it) }
             return
         }
         val consentIntent = runCatching { android.net.VpnService.prepare(this) }
@@ -767,13 +839,23 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 }
         } else {
             Log.d("TrackerBlockVpn", "Starting tracker-block service directly (already permitted)")
-            runCatching { startService(Intent(this, TrackerBlockVpnService::class.java)) }
+            runCatching { TrackerBlockVpnService.start(this) }
                 .onFailure { Log.e("TrackerBlockVpn", "startService() threw", it) }
         }
     }
 
     // launcher-wide apps state so we can refresh onResume
     private var allAppsState by mutableStateOf(listOf<AppItem>())
+
+    // Class-level, not rememberSaveable - GestureTrainingActivity can flip gesture_control_enabled
+    // off in the background (see releaseGestureControlCameraIfActive), so onResume needs to be
+    // able to re-sync this from the pref rather than trusting a value captured once at composition.
+    // Real value is set in onResume (Context isn't safely usable yet at field-init time), same as
+    // allAppsState above. Cardinal swipes (left/right/up/down) work via the fixed geometric
+    // fallback with no training needed at all, so this toggle no longer requires any trained
+    // gesture to exist before it can be turned on (used to, via hasTrainedAnyGesture - removed,
+    // that assumption no longer holds).
+    private var gestureControlEnabled by mutableStateOf(false)
 
     // assistant state
     private var waitingForReadConfirmation: Boolean = false
@@ -1034,13 +1116,37 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 val context = LocalContext.current
 
                 val lockPrefs = getSharedPreferences("lock_prefs", MODE_PRIVATE)
-                var trackerBlockingEnabled by remember { mutableStateOf(TrackerBlockVpnService.isRunning) }
+                val trackerBlockingEnabled by TrackerBlockVpnService.running.collectAsState()
                 var proxyAddressState by remember { mutableStateOf(lockPrefs.getString("traffic_proxy_address", "").orEmpty()) }
                 var cedalSharedSystemEnabled by remember {
                     mutableStateOf(CedalSharedSystem.isEnabled(CedalSharedSystem.prefs(this@MainActivity)))
                 }
                 var kioskModeEnabled by rememberSaveable {
                     mutableStateOf(getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("kiosk_mode_enabled", false))
+                }
+                // Turning kiosk mode ON is a benign, unprompted action (locking yourself further
+                // in isn't a security risk) - turning it OFF needs real verification first, since
+                // whoever's physically holding a kiosk-pinned phone shouldn't be able to just tap
+                // the toggle back off. Fingerprint or Voice ID, either sufficient on its own (an
+                // OR gate, unlike confirmation approvals elsewhere which always require
+                // fingerprint - here the point is "prove you're the owner by some strong signal",
+                // not "approve this specific sensitive action").
+                var showKioskExitVerification by remember { mutableStateOf(false) }
+                var kioskExitVoiceStatus by remember { mutableStateOf<String?>(null) }
+                var kioskExitVoiceBusy by remember { mutableStateOf(false) }
+                // gestureControlEnabled itself is a class-level property (see field declaration
+                // near allAppsState), not a local rememberSaveable var - onResume re-syncs it
+                // from the pref, since GestureTrainingActivity flips gesture_control_enabled off
+                // itself when it takes over the camera, and the toggle needs to reflect that
+                // truthfully on return rather than keep showing "on" for a dead service.
+                var pinchGestureEnabled by rememberSaveable {
+                    mutableStateOf(getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("pinch_gesture_enabled", true))
+                }
+                // Off by default, unlike pinch - this is a brand-new feature touching real
+                // confirmation approve/deny, not something existing users should be opted into
+                // silently.
+                var faceGesturesEnabled by rememberSaveable {
+                    mutableStateOf(getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("face_gestures_enabled", false))
                 }
                 var voiceActivationEnabled by rememberSaveable {
                     mutableStateOf(lockPrefs.getBoolean("voice_activation_enabled", false))
@@ -1058,6 +1164,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showFileBrowser by rememberSaveable { mutableStateOf(false) }
                 var showRequests by rememberSaveable { mutableStateOf(false) }
                 var showUpdates by rememberSaveable { mutableStateOf(false) }
+                var showMyApps by rememberSaveable { mutableStateOf(false) }
+                var showWallpaper by rememberSaveable { mutableStateOf(false) }
                 var showAppLog by rememberSaveable { mutableStateOf(false) }
                 var showCommands by rememberSaveable { mutableStateOf(false) }
                 var showNearbyDevices by rememberSaveable { mutableStateOf(false) }
@@ -1133,6 +1241,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 // fresh re-read after Clear, since RecentAppHistory itself isn't Compose state.
                 var recentsRefreshTick by remember { mutableStateOf(0) }
                 var showAbout by rememberSaveable { mutableStateOf(false) }
+                // These screens use TerminalScaffold (the App Workshop's look - see
+                // TerminalComposeStyle.kt), deliberately styled to feel like a separate,
+                // self-contained tool rather than another page of this launcher. The floating
+                // notification/quick-settings pull tabs below are hidden while any of these show,
+                // matching that a real separate Activity (App Workshop itself) never has them
+                // drawn on top of it either - showing them here just crowded each screen's own
+                // back button for no benefit, since none of these need quick access to the shade.
+                val showingWorkshopStyleScreen = showFreezer || showStorage || showFileBrowser ||
+                    showRequests || showMyApps || showAppLog || showCommands || showInstallFlags ||
+                    showCapabilities || showDownload || showMemory || showLocationHistory ||
+                    showMoreApps || showHiddenApps || showAbout || showWallpaper
 
 
                 var hiddenApps by rememberSaveable { mutableStateOf(setOf<String>()) }
@@ -1147,6 +1266,13 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var pendingConfirmationId by remember { mutableStateOf<Long?>(null) }
                 var pendingConfirmationLabel by remember { mutableStateOf("") }
                 var pendingConfirmationReason by remember { mutableStateOf("") }
+                // Set only by "confirm_yes"/"confirm_no" (nod/shake face gestures) and only when
+                // a confirmation is actually pending at the moment the gesture fires - never
+                // lingers to auto-answer a LATER confirmation. Consumed by the LaunchedEffect
+                // right after approveConfirmation/denyConfirmation are defined below, reusing
+                // those exact functions (same fingerprint-gated approval path as tapping/voice -
+                // a gesture never bypasses that).
+                var pendingConfirmationGestureAnswer by remember { mutableStateOf<Boolean?>(null) }
                 // Non-null only for actions that have a real scheduled-execution path behind
                 // them (see ScheduledActionReceiver) - lets the confirmation panel offer
                 // "do this later instead" without every action type needing to support it.
@@ -1562,6 +1688,36 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 commandReplyOverride = "Noted - I've added a suggestion to the Updates screen for you to review."
                             }
                         }
+                        // A request for a brand-new, separate standalone app - deliberately a
+                        // different command (and a different kind/endpoint/GitHub label, see
+                        // UpdateProposalLog.ProposalKind) from propose_update above, so this can
+                        // never be mistaken by the cloud pipeline for a change to THIS app's own
+                        // source. "propose_new_app:<short, clear description of the app>".
+                        "propose_new_app" -> arg?.let { raw ->
+                            val description = raw.trim()
+                            if (description.isBlank()) return@let
+                            val title = description.take(60)
+                            val id = System.currentTimeMillis()
+                            UpdateProposalLog.record(
+                                this@MainActivity,
+                                UpdateProposalEntry(
+                                    id, title, description, UpdateCategory.OTHER, ProposalOrigin.USER,
+                                    id, UpdateProposalStatus.PROPOSED, null, kind = ProposalKind.NEW_APP
+                                )
+                            )
+                            requestDeviceActionConfirmation(
+                                actionLabel = "Create app: $title",
+                                reason = description,
+                                target = id.toString(),
+                                onApprove = {
+                                    UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.APPROVED)
+                                    scope.launch {
+                                        EleneApiClient.submitNewAppRequest(id, title, description)
+                                    }
+                                },
+                                onDeny = { UpdateProposalLog.updateStatus(this@MainActivity, id, UpdateProposalStatus.DENIED) }
+                            )
+                        }
                         // Bridged from ScifiAccessibilityService, which has already stashed the
                         // target package/hint in its own fields before triggering this - purely
                         // mechanical here, no speaking: the accessibility service drives the
@@ -1651,8 +1807,35 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             saveBatterySaverMode(batteryPrefs, batteryMode)
                         }
                         "stop_listening" -> bubbleState = EleneBubbleState.DORMANT
+                        // Real target for the gesture system's "Open AI Chat" action (and
+                        // anything else that needs to open Elene's chat from outside her own
+                        // UI, e.g. EXTRA_ELENE_COMMAND from another Activity/Service) - same
+                        // state the "show chat"/"open chat" voice shortcut already flips.
+                        "open_chat" -> {
+                            showWelcome = false
+                            isEleneChatVisible = true
+                        }
+                        // Nod/shake face gestures (HandGestureService) answering a pending device
+                        // action confirmation - only takes effect if one is actually pending right
+                        // now (see pendingConfirmationGestureAnswer's declaration), never lingers.
+                        "confirm_yes" -> if (pendingConfirmationId != null) pendingConfirmationGestureAnswer = true
+                        "confirm_no" -> if (pendingConfirmationId != null) pendingConfirmationGestureAnswer = false
                         "scroll_up" -> screenControl { it.scrollUp() }
                         "scroll_down" -> screenControl { it.scrollDown() }
+                        "swipe_left" -> screenControl { svc ->
+                            val metrics = resources.displayMetrics
+                            val cx = metrics.widthPixels / 2
+                            val cy = metrics.heightPixels / 2
+                            val span = (metrics.widthPixels * 0.35f).toInt()
+                            svc.swipeCoords(cx + span / 2, cy, cx - span / 2, cy)
+                        }
+                        "swipe_right" -> screenControl { svc ->
+                            val metrics = resources.displayMetrics
+                            val cx = metrics.widthPixels / 2
+                            val cy = metrics.heightPixels / 2
+                            val span = (metrics.widthPixels * 0.35f).toInt()
+                            svc.swipeCoords(cx - span / 2, cy, cx + span / 2, cy)
+                        }
                         "go_back" -> screenControl { it.goBack() }
                         "go_home" -> screenControl { it.goHome() }
                         "open_recents" -> screenControl { it.openRecents() }
@@ -1724,6 +1907,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             setBrightnessPercent(target)
                         }
                         "hide_page" -> screenControl { it.toggleHidePage() }
+                        "set_lock_wallpaper" -> screenControl { it.setGlitchDesignAsLockWallpaper() }
+                        "find_my_location" -> startActivity(Intent(this@MainActivity, MyLocationActivity::class.java))
                         "flashlight" -> setFlashlight(contextAndroid, on = arg == "on")
                         "bluetooth" -> when (arg) {
                             "on" -> {
@@ -2218,6 +2403,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSettings = false
                                     showMemory = true
                                 },
+                                onOpenWallpaper = {
+                                    showSettings = false
+                                    showWallpaper = true
+                                },
                                 onRequestBiometricForWifiPassword = { onSuccess ->
                                     showBiometricPrompt(
                                         title = "Wi-Fi password",
@@ -2273,6 +2462,18 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             )
                         }
 
+                        showWallpaper -> {
+                            WallpaperScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                batteryMode = batteryMode,
+                                onBack = {
+                                    showWallpaper = false
+                                    showSettings = true
+                                }
+                            )
+                        }
+
                         showMemory -> {
                             // No confirmation step in between (unlike Requests/Updates, whose
                             // own state changes happen to force a recompose) - forgetting an
@@ -2316,8 +2517,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onHiddenAppsChange = { hiddenApps = it },
                                 onBack = {
                                     showHiddenApps = false
-                                    showSettings = false
-                                    showSecurity = false
+                                    showSecurity = true
                                 }
                             )
                         }
@@ -2388,6 +2588,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showSecurity = false
                                     showUpdates = true
                                 },
+                                onOpenMyApps = {
+                                    showSecurity = false
+                                    showMyApps = true
+                                },
                                 onOpenAppLog = {
                                     showSecurity = false
                                     showAppLog = true
@@ -2453,7 +2657,6 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onToggleFullWipe = { enabled -> setFullWipeEnabled(lockPrefs, enabled) },
                                 trackerBlockingActive = trackerBlockingEnabled,
                                 onToggleTrackerBlocking = { enabled ->
-                                    trackerBlockingEnabled = enabled
                                     toggleTrackerBlocking(enabled)
                                 },
                                 onOpenRouterSettings = {
@@ -2474,12 +2677,44 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 },
                                 kioskModeEnabled = kioskModeEnabled,
                                 onToggleKioskMode = { enabled ->
-                                    kioskModeEnabled = enabled
-                                    lockPrefs.edit().putBoolean("kiosk_mode_enabled", enabled).apply()
                                     if (enabled) {
+                                        kioskModeEnabled = true
+                                        lockPrefs.edit().putBoolean("kiosk_mode_enabled", true).apply()
                                         runCatching { startLockTask() }
                                     } else {
-                                        runCatching { stopLockTask() }
+                                        kioskExitVoiceStatus = null
+                                        showKioskExitVerification = true
+                                    }
+                                },
+                                gestureControlEnabled = gestureControlEnabled,
+                                onToggleGestureControl = { enabled ->
+                                    toggleGestureControl(enabled) { actuallyEnabled ->
+                                        gestureControlEnabled = actuallyEnabled
+                                        lockPrefs.edit().putBoolean("gesture_control_enabled", actuallyEnabled).apply()
+                                    }
+                                },
+                                onOpenGestureSettings = {
+                                    startActivity(Intent(this@MainActivity, GestureListActivity::class.java))
+                                },
+                                pinchGestureEnabled = pinchGestureEnabled,
+                                onTogglePinchGesture = { enabled ->
+                                    pinchGestureEnabled = enabled
+                                    lockPrefs.edit().putBoolean("pinch_gesture_enabled", enabled).apply()
+                                    // HandGestureService only reads this pref once, at its own
+                                    // onCreate - re-arm so a change takes effect immediately
+                                    // instead of needing gesture control toggled off/on by hand.
+                                    if (gestureControlEnabled) {
+                                        stopGestureControlService()
+                                        startGestureControlService()
+                                    }
+                                },
+                                faceGesturesEnabled = faceGesturesEnabled,
+                                onToggleFaceGestures = { enabled ->
+                                    faceGesturesEnabled = enabled
+                                    lockPrefs.edit().putBoolean("face_gestures_enabled", enabled).apply()
+                                    if (gestureControlEnabled) {
+                                        stopGestureControlService()
+                                        startGestureControlService()
                                     }
                                 },
                                 antiTheftModeEnabled = antiTheftModeEnabledState,
@@ -2516,6 +2751,86 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 },
                                 onRequestCallScreeningRole = { requestCallScreeningRole() }
                             )
+
+                            // Kiosk-exit verification - fingerprint or Voice ID, either sufficient
+                            // (see the state declarations above for why this is an OR gate, not
+                            // the always-fingerprint pattern the confirmation panel uses).
+                            if (showKioskExitVerification) {
+                                AlertDialog(
+                                    onDismissRequest = { showKioskExitVerification = false },
+                                    title = {
+                                        Text(
+                                            "Exit Kiosk Mode",
+                                            color = themeColor,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 16.sp
+                                        )
+                                    },
+                                    text = {
+                                        Column {
+                                            Text(
+                                                "Verify it's really you before unlocking kiosk mode - fingerprint or voice.",
+                                                color = if (isDark) Color.White else Color.Black,
+                                                fontSize = 13.sp,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            kioskExitVoiceStatus?.let { status ->
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Text(status, color = themeColor, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                            }
+                                        }
+                                    },
+                                    confirmButton = {
+                                        Button(onClick = {
+                                            showBiometricPrompt(
+                                                title = "Exit Kiosk Mode",
+                                                subtitle = "Verify it's really you",
+                                                onSuccess = {
+                                                    showKioskExitVerification = false
+                                                    kioskModeEnabled = false
+                                                    lockPrefs.edit().putBoolean("kiosk_mode_enabled", false).apply()
+                                                    runCatching { stopLockTask() }
+                                                },
+                                                onFailure = {
+                                                    kioskExitVoiceStatus = "Fingerprint failed - try again or use voice."
+                                                }
+                                            )
+                                        }) {
+                                            Text("Fingerprint", fontFamily = FontFamily.Monospace)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        if (VoiceIdManager.isEnrolled(this@MainActivity)) {
+                                            Button(
+                                                enabled = !kioskExitVoiceBusy,
+                                                onClick = {
+                                                    kioskExitVoiceBusy = true
+                                                    kioskExitVoiceStatus = "Listening..."
+                                                    scope.launch {
+                                                        val sample = recordVoiceSample(this@MainActivity)
+                                                        val best = sample?.let { VoiceIdManager.verifyBest(this@MainActivity, it) }
+                                                        kioskExitVoiceBusy = false
+                                                        if (best != null && best.second >= best.first.threshold) {
+                                                            showKioskExitVerification = false
+                                                            kioskModeEnabled = false
+                                                            lockPrefs.edit().putBoolean("kiosk_mode_enabled", false).apply()
+                                                            runCatching { stopLockTask() }
+                                                        } else {
+                                                            kioskExitVoiceStatus = "Voice didn't match - try fingerprint instead."
+                                                        }
+                                                    }
+                                                }
+                                            ) {
+                                                Text(if (kioskExitVoiceBusy) "Listening..." else "Voice", fontFamily = FontFamily.Monospace)
+                                            }
+                                        } else {
+                                            Button(onClick = { showKioskExitVerification = false }) {
+                                                Text("Cancel", fontFamily = FontFamily.Monospace)
+                                            }
+                                        }
+                                    }
+                                )
+                            }
                         }
 
                         showStorage -> {
@@ -2586,28 +2901,49 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     // Elene-originated proposals land here without an immediate
                                     // prompt (she wasn't asked) - reviewing them from this screen
                                     // routes through the exact same fingerprint gate every
-                                    // device-owner action already uses, not a separate one.
-                                    val actionWord = when (entry.category) {
-                                        UpdateCategory.FEATURE_ADDED -> "Add feature"
-                                        UpdateCategory.BUG_FIX -> "Fix"
-                                        UpdateCategory.FEATURE_REMOVED -> "Remove"
-                                        UpdateCategory.OTHER -> "Update"
-                                    }
+                                    // device-owner action already uses, not a separate one. A
+                                    // NEW_APP proposal can also land here if its own immediate
+                                    // prompt was dismissed without an answer - branch on kind so
+                                    // it still submits to the separate new-app endpoint, never
+                                    // the update-this-app one.
+                                    val actionLabel = if (entry.kind == ProposalKind.NEW_APP) "Create app: ${entry.title}"
+                                        else "${when (entry.category) {
+                                            UpdateCategory.FEATURE_ADDED -> "Add feature"
+                                            UpdateCategory.BUG_FIX -> "Fix"
+                                            UpdateCategory.FEATURE_REMOVED -> "Remove"
+                                            UpdateCategory.OTHER -> "Update"
+                                        }}: ${entry.title}"
                                     requestDeviceActionConfirmation(
-                                        actionLabel = "$actionWord: ${entry.title}",
+                                        actionLabel = actionLabel,
                                         reason = entry.description,
                                         target = entry.id.toString(),
                                         onApprove = {
                                             UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.APPROVED)
                                             // Same Stage 2 bridge as the immediate-prompt path above.
                                             scope.launch {
-                                                EleneApiClient.submitUpdateRequest(entry.id, entry.title, entry.description, entry.category.name)
+                                                if (entry.kind == ProposalKind.NEW_APP) {
+                                                    EleneApiClient.submitNewAppRequest(entry.id, entry.title, entry.description)
+                                                } else {
+                                                    EleneApiClient.submitUpdateRequest(entry.id, entry.title, entry.description, entry.category.name)
+                                                }
                                             }
                                         },
                                         onDeny = {
                                             UpdateProposalLog.updateStatus(this@MainActivity, entry.id, UpdateProposalStatus.DENIED)
                                         }
                                     )
+                                }
+                            )
+                        }
+
+                        showMyApps -> {
+                            MyAppsScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                entries = UpdateProposalLog.loadAll(this@MainActivity),
+                                onBack = {
+                                    showMyApps = false
+                                    showSecurity = true
                                 }
                             )
                         }
@@ -2907,6 +3243,32 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                             )
                         }
 
+                        // Nod/shake face gestures answering this confirmation - reuses the exact
+                        // same approveConfirmation/denyConfirmation as the panel's own Yes/No
+                        // buttons, so a nod still requires the fingerprint prompt like any other
+                        // approval path. See pendingConfirmationGestureAnswer's declaration above.
+                        LaunchedEffect(pendingConfirmationGestureAnswer, confId) {
+                            when (pendingConfirmationGestureAnswer) {
+                                true -> {
+                                    pendingConfirmationGestureAnswer = null
+                                    approveConfirmation {
+                                        ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.APPROVED)
+                                        pendingConfirmationApprove?.invoke()
+                                        pendingConfirmationApprove = null
+                                        pendingConfirmationDeny = null
+                                        pendingConfirmationScheduleType = null
+                                        pendingConfirmationScheduleTarget = null
+                                        pendingConfirmationId = null
+                                    }
+                                }
+                                false -> {
+                                    pendingConfirmationGestureAnswer = null
+                                    denyConfirmation()
+                                }
+                                null -> Unit
+                            }
+                        }
+
                         fun snoozeConfirmation(delayMinutes: Int) {
                             ActionLog.updateStatus(this@MainActivity, confId, ActionRequestStatus.SNOOZED)
                             val savedApprove = pendingConfirmationApprove
@@ -3048,21 +3410,24 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                     // so they need to respect the same safe-area inset every screen's own
                     // header does - without systemBarsPadding here, they sat flush at the
                     // absolute top edge and visually crowded into each screen's back button.
-                    NotificationBarTab(
-                        themeColor = themeColor,
-                        unreadCount = notificationFeed.size,
-                        onClick = { showNotificationPanel = true },
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .systemBarsPadding()
-                    )
-                    QuickSettingsTab(
-                        themeColor = themeColor,
-                        onClick = { showQuickSettingsPanel = true },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .systemBarsPadding()
-                    )
+                    // Hidden entirely on TerminalScaffold screens - see showingWorkshopStyleScreen.
+                    if (!showingWorkshopStyleScreen) {
+                        NotificationBarTab(
+                            themeColor = themeColor,
+                            unreadCount = notificationFeed.size,
+                            onClick = { showNotificationPanel = true },
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .systemBarsPadding()
+                        )
+                        QuickSettingsTab(
+                            themeColor = themeColor,
+                            onClick = { showQuickSettingsPanel = true },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .systemBarsPadding()
+                        )
+                    }
 
                     if (showNotificationPanel) {
                         NotificationsPanel(
@@ -3195,6 +3560,24 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onOpenNearbyDevices = {
                                     showQuickSettingsPanel = false
                                     showNearbyDevices = true
+                                },
+                                onOpenGlobe = {
+                                    showQuickSettingsPanel = false
+                                    // Launched as a real Activity, not a Compose screen -
+                                    // confirmed live (isolation test) that a hardware-accelerated
+                                    // WebView running WebGL renders correctly here but stays
+                                    // solid black when embedded via Compose's AndroidView on
+                                    // this device, a genuine Compose+WebView compositing bug,
+                                    // not anything wrong with the Three.js scene itself.
+                                    startActivity(Intent(this@MainActivity, GlobeActivity::class.java))
+                                },
+                                onOpenMyLocation = {
+                                    showQuickSettingsPanel = false
+                                    startActivity(Intent(this@MainActivity, MyLocationActivity::class.java))
+                                },
+                                onOpenReactor = {
+                                    showQuickSettingsPanel = false
+                                    startActivity(Intent(this@MainActivity, XenosActivity::class.java))
                                 }
                             ),
                             onOpenAirplaneModeSettings = { openAirplaneModeSettings() },
@@ -3240,6 +3623,11 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         allAppsState = loadAllApps(pm)
         applyKioskLockTaskFeatures()
 
+        // Re-sync from the pref rather than trusting the in-memory value - GestureTrainingActivity
+        // flips this pref off itself when it takes the camera away from HandGestureService, and the
+        // toggle should reflect that honestly instead of keep showing "on" for a dead service.
+        gestureControlEnabled = getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("gesture_control_enabled", false)
+
         // Screen Pinning doesn't survive an app restart on its own - re-pin if the user had
         // Kiosk mode on and we're not already pinned (e.g. after a reboot).
         val kioskWanted = getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("kiosk_mode_enabled", false)
@@ -3247,6 +3635,17 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
         val alreadyPinned = am?.lockTaskModeState != android.app.ActivityManager.LOCK_TASK_MODE_NONE
         if (kioskWanted && alreadyPinned != true) {
             runCatching { startLockTask() }
+        }
+
+        // Same idea as Kiosk mode above - a foreground service doesn't survive a reboot/process
+        // kill on its own, so re-arm gesture control here if it was left on and CAMERA is
+        // already granted. If permission isn't there (e.g. it was revoked in system Settings
+        // since), this just leaves it off rather than surprise-prompting on every resume.
+        val gestureControlWanted = getSharedPreferences("lock_prefs", MODE_PRIVATE).getBoolean("gesture_control_enabled", false)
+        if (gestureControlWanted && !HandGestureService.isRunning &&
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        ) {
+            startGestureControlService()
         }
     }
 
