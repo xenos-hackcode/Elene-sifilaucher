@@ -100,6 +100,15 @@ object MediaSessionBridge {
         )
     }
 
+    /** Unconditionally starts playback (never toggles to pause) - for "play music" style voice
+     * commands, where the intent is always "start", regardless of whatever happened to already
+     * be playing. [playPause] stays toggle-based for the Now Playing card's own button. */
+    fun play(context: Context) {
+        val controller = activeController(context) ?: return
+        controller.transportControls.play()
+        dispatchMediaKey(context, KeyEvent.KEYCODE_MEDIA_PLAY)
+    }
+
     fun playPause(context: Context) {
         val controller = activeController(context) ?: return
         val state = controller.playbackState ?: return

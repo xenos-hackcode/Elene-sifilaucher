@@ -44,6 +44,8 @@ fun SettingsScreen(
     onOpenCapabilities: () -> Unit,
     onOpenMemory: () -> Unit,
     onOpenWallpaper: () -> Unit,
+    onOpenInfo: () -> Unit,
+    onOpenToolsMarket: () -> Unit,
     onRequestBiometricForWifiPassword: (onSuccess: () -> Unit) -> Unit,
     onDarkModeChange: (DarkModeOption) -> Unit = {},
     currentIconPackPkg: String? = null,
@@ -429,6 +431,20 @@ fun SettingsScreen(
                         value = if (backendUrlConfigured) tr("backend_url_configured") else tr("backend_url_not_configured"),
                         showDivider = false,
                         onClick = { showBackendUrlDialog = true }
+                    )
+                }
+
+                PanelSection(title = "Info", themeColor = themeColor) {
+                    PanelRow(
+                        label = "App roles (music, chat, call)",
+                        themeColor = themeColor,
+                        onClick = onOpenInfo
+                    )
+                    PanelRow(
+                        label = "Tools market",
+                        themeColor = themeColor,
+                        showDivider = false,
+                        onClick = onOpenToolsMarket
                     )
                 }
 

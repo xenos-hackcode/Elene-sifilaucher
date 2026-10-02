@@ -151,7 +151,8 @@ data class ExtraControlActions(
     val onOpenNearbyDevices: () -> Unit,
     val onOpenGlobe: () -> Unit,
     val onOpenMyLocation: () -> Unit,
-    val onOpenReactor: () -> Unit
+    val onOpenReactor: () -> Unit,
+    val onOpenToolsMarket: () -> Unit
 )
 
 /** Shared drag-to-close + scrim wrapper - drag up beyond the threshold, or tap the scrim,
@@ -585,7 +586,12 @@ private fun QuickSettingsPanelBody(
             ControlTileSpec("⌱", "MY LOCATION", false, extraActions.onOpenMyLocation),
             // Visual home for the AI + multimodal chat (text/voice/photo/file) - see
             // XenosActivity.
-            ControlTileSpec("☢", "XENOS", false, extraActions.onOpenReactor)
+            ControlTileSpec("☢", "XENOS", false, extraActions.onOpenReactor),
+            // A directory of this launcher's own built-in tools (Wallpaper, VPN, Gesture
+            // Training, Globe, My Location, Safety, etc.), each with what it does and how to
+            // control it - user: "create a new app called tools market in there different tools
+            // used on phone the way u can control it would be listed".
+            ControlTileSpec("🧰", "TOOLS MARKET", false, extraActions.onOpenToolsMarket)
         )
 
         tiles.chunked(4).forEach { rowTiles ->

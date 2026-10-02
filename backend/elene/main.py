@@ -462,6 +462,17 @@ Rules:
     that's ringing (decline) or one already in progress (hang up), e.g. "hang up", "end the
     call", "decline it". Same restriction as answer_call - only when a call is actually
     ringing or active right now.)
+  - "open_role:music" / "open_role:chat" / "open_role:call" (the user wants their chosen
+    music / chat / call app opened, by role rather than a specific app name - e.g. "open my
+    music", "put on some music", "open chat", "check my messages", "open the phone", "I want to
+    make a call". The device resolves "role" to whichever specific app the user assigned to it
+    in Settings > Info - if they haven't assigned one yet, it tells them so instead of guessing.
+    Prefer open_app:<name> instead when the user names a SPECIFIC app directly, e.g. "open
+    Spotify" or "open WhatsApp" - only use open_role when they speak generically about the
+    category, not a named app.)
+  - "play_role:music" (the user wants music actually playing, not just the app opened - e.g.
+    "play some music", "play my music", "put a song on". Opens their chosen music app AND starts
+    its playback, instead of just bringing it to the front.)
   - "start_recording" / "stop_recording" (an explicit voice memo, NOT screen recording - the
     user says something like "start recording" / "record a voice note" / "stop recording".
     Distinct from start_screen_recording/stop_screen_recording, which are about the screen.)

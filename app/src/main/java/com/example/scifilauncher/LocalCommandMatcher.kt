@@ -56,7 +56,13 @@ object LocalCommandMatcher {
         setOf("stop recording", "stop the recording", "stop voice memo") to "stop_recording",
         setOf("start recording", "start a voice memo", "record a voice memo") to "start_recording",
         setOf("stop the game", "stop playing", "stop game") to "stop_game",
-        setOf("clear the highlight", "remove the highlight", "unhighlight") to "highlight_off"
+        setOf("clear the highlight", "remove the highlight", "unhighlight") to "highlight_off",
+        // Settings > Info roles - a user-chosen specific app per role, never a guessed search
+        // match, so these are checked before the generic "open <app name>" prefix below.
+        setOf("open music", "launch music", "start music") to "open_role:music",
+        setOf("play music", "play some music", "play a song", "play the music") to "play_role:music",
+        setOf("open chat", "launch chat", "open my chat", "open messaging") to "open_role:chat",
+        setOf("open call", "open phone", "make a call", "open the phone app", "open the dialer") to "open_role:call"
     )
 
     private val openAppPrefixes = listOf("open ", "launch ", "start ")

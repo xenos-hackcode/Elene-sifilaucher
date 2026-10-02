@@ -1356,6 +1356,46 @@ class ScifiAccessibilityService : AccessibilityService() {
             // No UI needed for these - complete directly, same as open_app above.
             "answer_call" -> { attemptAnswerCall(this@ScifiAccessibilityService); true }
             "end_call" -> { attemptEndCall(this@ScifiAccessibilityService); true }
+            // Settings > Info roles - "music"/"chat"/"call" each point at one specific
+            // user-chosen app (AppRoleStore), not a guessed label search. "play_role" additionally
+            // nudges the app's media session to actually start playback once it's had a moment
+            // to launch, via the same MediaSessionBridge the Now Playing card already uses.
+            "open_role" -> {
+                val role = arg?.let { a -> AppRole.entries.firstOrNull { it.key == a } }
+                when {
+                    role == null -> false
+                    else -> {
+                        val pkg = AppRoleStore.get(this@ScifiAccessibilityService, role)
+                        if (pkg == null) {
+                            speakOut("You haven't set a ${role.label.lowercase()} app yet - add one in Settings, Info.")
+                            true
+                        } else {
+                            openAppByPackage(pkg)
+                        }
+                    }
+                }
+            }
+            "play_role" -> {
+                val role = arg?.let { a -> AppRole.entries.firstOrNull { it.key == a } }
+                when {
+                    role == null -> false
+                    else -> {
+                        val pkg = AppRoleStore.get(this@ScifiAccessibilityService, role)
+                        if (pkg == null) {
+                            speakOut("You haven't set a ${role.label.lowercase()} app yet - add one in Settings, Info.")
+                            true
+                        } else {
+                            val opened = openAppByPackage(pkg)
+                            if (opened) {
+                                bubbleHandler.postDelayed({
+                                    MediaSessionBridge.play(this@ScifiAccessibilityService)
+                                }, 1200L)
+                            }
+                            opened
+                        }
+                    }
+                }
+            }
             // Doesn't start the recorder here directly - see the comment on
             // pendingVoiceMemoStart / retryListeningSoon() for why: it needs to wait until the
             // "Recording started." reply (already in flight via speakOut, called just before the

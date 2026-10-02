@@ -1232,6 +1232,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 var showSecurity by rememberSaveable { mutableStateOf(false) }
                 var showHiddenApps by rememberSaveable { mutableStateOf(false) }
+                var showInfo by rememberSaveable { mutableStateOf(false) }
+                var showToolsMarket by rememberSaveable { mutableStateOf(false) }
                 var showFavoriteApps by rememberSaveable { mutableStateOf(false) }
                 var showBatteryAllowedApps by rememberSaveable { mutableStateOf(false) }
                 var isPageMode by rememberSaveable { mutableStateOf(false) }
@@ -1251,7 +1253,7 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                 val showingWorkshopStyleScreen = showFreezer || showStorage || showFileBrowser ||
                     showRequests || showMyApps || showAppLog || showCommands || showInstallFlags ||
                     showCapabilities || showDownload || showMemory || showLocationHistory ||
-                    showMoreApps || showHiddenApps || showAbout || showWallpaper
+                    showMoreApps || showHiddenApps || showAbout || showWallpaper || showInfo || showToolsMarket
 
 
                 var hiddenApps by rememberSaveable { mutableStateOf(setOf<String>()) }
@@ -2382,6 +2384,8 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                     showRecents = false
                                     showSecurity = false
                                     showHiddenApps = false
+                                    showInfo = false
+                                    showToolsMarket = false
                                     showFavoriteApps = false
                                     showBatteryAllowedApps = false
                                 },
@@ -2406,6 +2410,14 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onOpenWallpaper = {
                                     showSettings = false
                                     showWallpaper = true
+                                },
+                                onOpenInfo = {
+                                    showSettings = false
+                                    showInfo = true
+                                },
+                                onOpenToolsMarket = {
+                                    showSettings = false
+                                    showToolsMarket = true
                                 },
                                 onRequestBiometricForWifiPassword = { onSuccess ->
                                     showBiometricPrompt(
@@ -2502,6 +2514,166 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 fontSize = fontSizeOptionToSp(fontSizeOption),
                                 onBack = {
                                     showMoreApps = false
+                                    showSettings = true
+                                }
+                            )
+                        }
+
+                        showToolsMarket -> {
+                            ToolsMarketScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                tools = listOf(
+                                    ToolMarketEntry(
+                                        name = "Wallpaper",
+                                        whatItDoes = "Image, video, and live (touch/sensor/camera-reactive) backgrounds.",
+                                        howToControl = "Tap to open, pick a category and a design.",
+                                        onOpen = { showToolsMarket = false; showWallpaper = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "App roles (Info)",
+                                        whatItDoes = "Points \"music\"/\"chat\"/\"call\" at the one real app you mean.",
+                                        howToControl = "Tap to assign, or say \"open music\" / \"open chat\" / \"open call\" once set.",
+                                        onOpen = { showToolsMarket = false; showInfo = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "VPN client",
+                                        whatItDoes = "Real WireGuard - connect/disconnect to a server you add yourself.",
+                                        howToControl = "Tap to open and manage saved servers.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, VpnClientActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Network protection",
+                                        whatItDoes = "Tracker/ad blocking VPN, with per-app exceptions.",
+                                        howToControl = "Tap to open and toggle blocking.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, NetworkProtectionActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Tracker exceptions",
+                                        whatItDoes = "Apps that should always bypass the tracker blocker.",
+                                        howToControl = "Tap to add or remove an app.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, TrackerExceptionsActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Gesture training",
+                                        whatItDoes = "Record a touchless hand gesture mapped to a device action.",
+                                        howToControl = "Tap to record a new gesture with the front camera.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, GestureTrainingActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Gestures list",
+                                        whatItDoes = "Every gesture you've recorded and what it's mapped to.",
+                                        howToControl = "Tap to view, rename, or delete one.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, GestureListActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Globe",
+                                        whatItDoes = "Interactive 3D globe - drag to rotate, double-tap a spot.",
+                                        howToControl = "Tap to open, or the Globe quick-settings tile.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, GlobeActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "My Location",
+                                        whatItDoes = "Your live GPS position on a real street map.",
+                                        howToControl = "Tap to open, or say \"I'm lost, where am I\".",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, MyLocationActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Safety tools",
+                                        whatItDoes = "Sequence Mode, check-ins, and intruder capture.",
+                                        howToControl = "Tap to open and arm/manage safety features.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, SafetyToolsActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Xenos",
+                                        whatItDoes = "Chat with the AI - text, voice, photos, and files.",
+                                        howToControl = "Tap to open, or the XENOS quick-settings tile.",
+                                        onOpen = {
+                                            showToolsMarket = false
+                                            startActivity(Intent(this@MainActivity, XenosActivity::class.java))
+                                        }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Command reference",
+                                        whatItDoes = "Every voice command Xenos understands and how to say it.",
+                                        howToControl = "Tap to browse the full list.",
+                                        onOpen = { showToolsMarket = false; showCommands = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "App freezer",
+                                        whatItDoes = "Suspend an app so it's hidden without killing its process.",
+                                        howToControl = "Tap to open, or say \"freeze Instagram\" / \"unfreeze Instagram\".",
+                                        onOpen = { showToolsMarket = false; showFreezer = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "File browser",
+                                        whatItDoes = "Browse this device's own file storage.",
+                                        howToControl = "Tap to open and navigate folders.",
+                                        onOpen = { showToolsMarket = false; showFileBrowser = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Storage",
+                                        whatItDoes = "What's using space on this device.",
+                                        howToControl = "Tap to open the breakdown.",
+                                        onOpen = { showToolsMarket = false; showStorage = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "App log",
+                                        whatItDoes = "A real history of what Xenos has done on this device.",
+                                        howToControl = "Tap to review past actions.",
+                                        onOpen = { showToolsMarket = false; showAppLog = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Memory",
+                                        whatItDoes = "Facts Xenos has remembered about you across conversations.",
+                                        howToControl = "Tap to review or forget one, or say \"remember that...\".",
+                                        onOpen = { showToolsMarket = false; showMemory = true }
+                                    ),
+                                    ToolMarketEntry(
+                                        name = "Capabilities",
+                                        whatItDoes = "Everything this launcher and Xenos together are able to do.",
+                                        howToControl = "Tap to browse the full breakdown.",
+                                        onOpen = { showToolsMarket = false; showCapabilities = true }
+                                    )
+                                ),
+                                onBack = {
+                                    showToolsMarket = false
+                                    showSettings = true
+                                }
+                            )
+                        }
+
+                        showInfo -> {
+                            InfoScreen(
+                                themeColor = themeColor,
+                                isDark = isDark,
+                                apps = visibleApps,
+                                onBack = {
+                                    showInfo = false
                                     showSettings = true
                                 }
                             )
@@ -3578,6 +3750,10 @@ class MainActivity : androidx.activity.ComponentActivity(), TextToSpeech.OnInitL
                                 onOpenReactor = {
                                     showQuickSettingsPanel = false
                                     startActivity(Intent(this@MainActivity, XenosActivity::class.java))
+                                },
+                                onOpenToolsMarket = {
+                                    showQuickSettingsPanel = false
+                                    showToolsMarket = true
                                 }
                             ),
                             onOpenAirplaneModeSettings = { openAirplaneModeSettings() },
